@@ -1,0 +1,8 @@
+.venv/
+baseline/.venv/
+__pycache__/
+*.pyc
+baseline/reports/
+baseline/data/processed/
+
+node_modules/
