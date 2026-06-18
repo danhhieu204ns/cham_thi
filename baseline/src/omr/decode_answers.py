@@ -7,6 +7,16 @@ from typing import Iterable
 
 
 CHOICE_ORDER = ("A", "B", "C", "D")
+MODEL_STATE_KEYS = (
+    "prelabel_source",
+    "model_label",
+    "model_confidence",
+    "filled_probability",
+    "blank_probability",
+    "model_argmax_label",
+    "model_argmax_confidence",
+    "model_filled_threshold",
+)
 
 
 def _sort_choice_key(record: dict) -> tuple[int, str]:
@@ -17,6 +27,18 @@ def _sort_choice_key(record: dict) -> tuple[int, str]:
         return len(CHOICE_ORDER), choice
 
 
+def _state_from_record(record: dict) -> dict:
+    state = {
+        "prelabel": record["prelabel"],
+        "darkness_score": record["darkness_score"],
+        "crop_path": record["crop_path"],
+    }
+    for key in MODEL_STATE_KEYS:
+        if key in record:
+            state[key] = record[key]
+    return state
+
+
 def decode_question(records: Iterable[dict]) -> dict:
     bubbles = sorted(records, key=_sort_choice_key)
     if not bubbles:
@@ -24,14 +46,7 @@ def decode_question(records: Iterable[dict]) -> dict:
 
     question_id = str(bubbles[0]["question_id"])
     question_number = int(bubbles[0]["question_number"])
-    states = {
-        str(record["choice"]): {
-            "prelabel": record["prelabel"],
-            "darkness_score": record["darkness_score"],
-            "crop_path": record["crop_path"],
-        }
-        for record in bubbles
-    }
+    states = {str(record["choice"]): _state_from_record(record) for record in bubbles}
 
     filled = [record for record in bubbles if record["prelabel"] == "filled"]
     ambiguous = [record for record in bubbles if record["prelabel"] == "ambiguous"]

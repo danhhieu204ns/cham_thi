@@ -11,10 +11,11 @@ from typing import Iterable
 
 import cv2
 import numpy as np
-from PIL import Image
+from PIL import Image, ImageDraw
 
 from . import exam_code, part1, part2, part3, sbd
 from .bubble_crops import crop_and_prelabel
+from .group_relabel import relabel_groups_by_score
 from .identity import crop_output_path, relabel_identity_groups
 from .markers import detect_registration_markers
 from .template import canonical_size
@@ -27,6 +28,13 @@ class ExtractionThresholds:
     filled: float = 0.08
     identity_filled: float = 0.07
     identity_margin: float = 0.03
+
+
+@dataclass(frozen=True)
+class BubbleModelSettings:
+    filled_threshold: float = 0.90
+    margin_threshold: float = 0.10
+    batch_size: int = 256
 
 
 def build_all_specs(template: dict) -> list[dict]:
@@ -103,16 +111,73 @@ def warped_to_pil(warped: np.ndarray, template: dict) -> Image.Image:
     return image
 
 
+def save_bbox_overlay(
+    image: Image.Image,
+    crop_records: Iterable[dict],
+    output_path: Path,
+    *,
+    project_root: Path | None = None,
+) -> str:
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    base = image.convert("RGBA")
+    overlay = Image.new("RGBA", base.size, (255, 255, 255, 0))
+    draw = ImageDraw.Draw(overlay)
+    colors = {
+        "filled": (34, 197, 94),
+        "ambiguous": (245, 158, 11),
+        "invalid": (239, 68, 68),
+        "blank": (59, 130, 246),
+    }
+
+    for record in crop_records:
+        x1, y1, x2, y2 = (int(value) for value in record["bbox"])
+        prelabel = str(record.get("prelabel", "blank"))
+        red, green, blue = colors.get(prelabel, (107, 114, 128))
+        width = 3 if prelabel == "filled" else 2 if prelabel in {"ambiguous", "invalid"} else 1
+        alpha = 52 if prelabel != "blank" else 18
+        draw.rectangle(
+            [x1, y1, x2, y2],
+            outline=(red, green, blue, 235),
+            fill=(red, green, blue, alpha),
+            width=width,
+        )
+        if prelabel in {"filled", "ambiguous", "invalid"}:
+            label = str(record.get("label") or record.get("choice") or "")
+            if label:
+                draw.text((x1, max(0, y1 - 11)), label[:8], fill=(red, green, blue, 255))
+
+    legend = [
+        ("filled", colors["filled"]),
+        ("ambiguous", colors["ambiguous"]),
+        ("invalid", colors["invalid"]),
+        ("blank", colors["blank"]),
+    ]
+    legend_x, legend_y = 18, 18
+    for index, (label, color) in enumerate(legend):
+        y = legend_y + index * 22
+        draw.rectangle([legend_x, y, legend_x + 14, y + 14], fill=(*color, 185))
+        draw.text((legend_x + 20, y - 1), label, fill=(*color, 255))
+
+    annotated = Image.alpha_composite(base, overlay).convert("RGB")
+    annotated.save(output_path, quality=92)
+    if project_root is not None:
+        return path_for_json(output_path, project_root)
+    return output_path.as_posix()
+
+
 def crop_specs_from_image(
     image: Image.Image,
     specs: Iterable[dict],
     *,
     sheet_meta: dict,
     thresholds: ExtractionThresholds,
+    bubble_classifier: object | None = None,
+    bubble_model_settings: BubbleModelSettings | None = None,
     output_dir: Path | None = None,
     project_root: Path | None = None,
 ) -> list[dict]:
     crop_records: list[dict] = []
+    crops_by_spec_id = {}
     for spec in specs:
         bbox = tuple(int(value) for value in spec["bbox"])
         crop_result = crop_and_prelabel(
@@ -145,10 +210,68 @@ def crop_specs_from_image(
                 **sheet_meta,
                 "darkness_score": round(crop_result.darkness_score, 6),
                 "prelabel": crop_result.prelabel,
+                "prelabel_source": "darkness_rule",
                 "crop_path": crop_path_value,
             }
         )
+        crops_by_spec_id[spec["spec_id"]] = crop_result.crop
+
+    if bubble_classifier is not None:
+        settings = bubble_model_settings or BubbleModelSettings()
+        apply_bubble_classifier(
+            crop_records,
+            crops_by_spec_id,
+            bubble_classifier=bubble_classifier,
+            batch_size=settings.batch_size,
+        )
+        relabel_groups_by_score(
+            crop_records,
+            filled_threshold=settings.filled_threshold,
+            margin_threshold=settings.margin_threshold,
+            score_key="filled_probability",
+            output_dir=output_dir,
+            project_root=project_root,
+        )
+
     return crop_records
+
+
+def apply_bubble_classifier(
+    crop_records: list[dict],
+    crops_by_spec_id: dict[str, Image.Image],
+    *,
+    bubble_classifier: object,
+    batch_size: int,
+) -> None:
+    items = [
+        (str(record["spec_id"]), crops_by_spec_id[str(record["spec_id"])])
+        for record in crop_records
+    ]
+    predictions = bubble_classifier.predict_images(items, batch_size=batch_size)
+    predictions_by_spec_id = {prediction.image_path: prediction for prediction in predictions}
+
+    for record in crop_records:
+        prediction = predictions_by_spec_id[str(record["spec_id"])]
+        record.update(
+            {
+                "model_label": prediction.label,
+                "model_confidence": round(prediction.confidence, 6),
+                "filled_probability": (
+                    round(prediction.filled_probability, 6)
+                    if prediction.filled_probability is not None
+                    else None
+                ),
+                "blank_probability": (
+                    round(prediction.blank_probability, 6)
+                    if prediction.blank_probability is not None
+                    else None
+                ),
+                "model_argmax_label": prediction.argmax_label,
+                "model_argmax_confidence": round(prediction.argmax_confidence, 6),
+                "model_filled_threshold": prediction.threshold,
+                "prelabel_source": "bubble_classifier_group",
+            }
+        )
 
 
 def decode_identity_and_written_sections(crop_records: list[dict], template: dict, sheet_meta: dict) -> dict:
@@ -212,10 +335,14 @@ def extract_sheet(
     *,
     project_root: Path,
     thresholds: ExtractionThresholds | None = None,
+    bubble_classifier: object | None = None,
+    bubble_model_settings: BubbleModelSettings | None = None,
     crop_output_dir: Path | None = None,
     warped_output_path: Path | None = None,
+    bbox_overlay_path: Path | None = None,
 ) -> dict:
     thresholds = thresholds or ExtractionThresholds()
+    bubble_model_settings = bubble_model_settings or BubbleModelSettings()
     input_path = input_path if input_path.is_absolute() else project_root / input_path
     input_path = input_path.resolve()
     image_id = image_id_from_input(input_path, project_root)
@@ -246,16 +373,32 @@ def extract_sheet(
         build_all_specs(template),
         sheet_meta=sheet_meta,
         thresholds=thresholds,
+        bubble_classifier=bubble_classifier,
+        bubble_model_settings=bubble_model_settings,
         output_dir=crop_output_dir,
         project_root=project_root,
     )
-    relabel_identity_groups(
-        crop_records,
-        filled_threshold=thresholds.identity_filled,
-        margin_threshold=thresholds.identity_margin,
-        output_dir=crop_output_dir,
-        project_root=project_root if crop_output_dir is not None else None,
-    )
+    if bubble_classifier is None:
+        relabel_identity_groups(
+            crop_records,
+            filled_threshold=thresholds.identity_filled,
+            margin_threshold=thresholds.identity_margin,
+            output_dir=crop_output_dir,
+            project_root=project_root if crop_output_dir is not None else None,
+        )
+
+    if bbox_overlay_path is not None:
+        bbox_overlay_path = (
+            bbox_overlay_path
+            if bbox_overlay_path.is_absolute()
+            else project_root / bbox_overlay_path
+        )
+        warp_info["bbox_overlay_path"] = save_bbox_overlay(
+            image,
+            crop_records,
+            bbox_overlay_path,
+            project_root=project_root,
+        )
 
     records_by_section: dict[str, list[dict]] = defaultdict(list)
     for record in crop_records:
@@ -274,6 +417,16 @@ def extract_sheet(
             "filled": thresholds.filled,
             "identity_filled": thresholds.identity_filled,
             "identity_margin": thresholds.identity_margin,
+            "bubble_classifier": (
+                {
+                    "filled": bubble_model_settings.filled_threshold,
+                    "margin": bubble_model_settings.margin_threshold,
+                    "batch_size": bubble_model_settings.batch_size,
+                    "model_path": str(getattr(bubble_classifier, "model_path", "unknown")),
+                }
+                if bubble_classifier is not None
+                else None
+            ),
         },
         "summary": {
             "sbd": extra["identity"]["sbd"]["value"],

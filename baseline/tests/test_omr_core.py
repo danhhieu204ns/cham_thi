@@ -10,6 +10,7 @@ sys.path.insert(0, str(PROJECT_ROOT / "src"))
 
 from omr.decode_answers import decode_question
 from omr.geometry import bubble_bbox
+from omr.group_relabel import relabel_groups_by_score
 from omr.identity import decode_identity
 from omr.jsonl_io import (
     read_jsonl_records,
@@ -161,6 +162,89 @@ class DecodeTests(unittest.TestCase):
 
         self.assertEqual(result["answers"]["III_001"]["value"], "-1,2")
         self.assertEqual(result["answers"]["III_001"]["status"], "accepted")
+
+
+class GroupRelabelTests(unittest.TestCase):
+    def test_relabel_groups_by_score_selects_clear_top_choice(self) -> None:
+        records = [
+            {
+                "item_id": "I_001",
+                "spec_id": "I_001_A",
+                "prelabel": "blank",
+                "filled_probability": 0.98,
+            },
+            {
+                "item_id": "I_001",
+                "spec_id": "I_001_B",
+                "prelabel": "filled",
+                "filled_probability": 0.12,
+            },
+        ]
+
+        relabel_groups_by_score(
+            records,
+            filled_threshold=0.9,
+            margin_threshold=0.1,
+            score_key="filled_probability",
+        )
+
+        self.assertEqual([record["prelabel"] for record in records], ["filled", "blank"])
+
+    def test_relabel_groups_by_score_blanks_group_below_threshold(self) -> None:
+        records = [
+            {
+                "item_id": "I_001",
+                "spec_id": "I_001_A",
+                "prelabel": "filled",
+                "filled_probability": 0.89,
+            },
+            {
+                "item_id": "I_001",
+                "spec_id": "I_001_B",
+                "prelabel": "blank",
+                "filled_probability": 0.20,
+            },
+        ]
+
+        relabel_groups_by_score(
+            records,
+            filled_threshold=0.9,
+            margin_threshold=0.1,
+            score_key="filled_probability",
+        )
+
+        self.assertEqual([record["prelabel"] for record in records], ["blank", "blank"])
+
+    def test_relabel_groups_by_score_flags_close_top_choices(self) -> None:
+        records = [
+            {
+                "item_id": "I_001",
+                "spec_id": "I_001_A",
+                "prelabel": "blank",
+                "filled_probability": 0.96,
+            },
+            {
+                "item_id": "I_001",
+                "spec_id": "I_001_B",
+                "prelabel": "blank",
+                "filled_probability": 0.91,
+            },
+            {
+                "item_id": "I_001",
+                "spec_id": "I_001_C",
+                "prelabel": "blank",
+                "filled_probability": 0.10,
+            },
+        ]
+
+        relabel_groups_by_score(
+            records,
+            filled_threshold=0.9,
+            margin_threshold=0.1,
+            score_key="filled_probability",
+        )
+
+        self.assertEqual([record["prelabel"] for record in records], ["ambiguous", "ambiguous", "blank"])
 
 
 if __name__ == "__main__":

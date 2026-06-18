@@ -4,5 +4,7 @@ __pycache__/
 *.pyc
 baseline/reports/
 baseline/data/processed/
+bubble_classifier/data/
+bubble_classifier/runs/
 
 node_modules/

@@ -7,6 +7,16 @@ from typing import Iterable
 
 DIGITS = tuple(str(value) for value in range(10))
 PART2_CHOICES = ("T", "F")
+MODEL_STATE_KEYS = (
+    "prelabel_source",
+    "model_label",
+    "model_confidence",
+    "filled_probability",
+    "blank_probability",
+    "model_argmax_label",
+    "model_argmax_confidence",
+    "model_filled_threshold",
+)
 
 
 def choice_order(choice: str) -> tuple[int, str]:
@@ -24,12 +34,7 @@ def choice_order(choice: str) -> tuple[int, str]:
 def decode_group(records: Iterable[dict]) -> dict:
     records = sorted(records, key=lambda record: choice_order(str(record["choice"])))
     states = {
-        str(record["choice"]): {
-            "label": record.get("label", record["choice"]),
-            "prelabel": record["prelabel"],
-            "darkness_score": record["darkness_score"],
-            "crop_path": record.get("crop_path"),
-        }
+        str(record["choice"]): _state_from_record(record)
         for record in records
     }
     filled = [record for record in records if record["prelabel"] == "filled"]
@@ -72,3 +77,16 @@ def decode_group(records: Iterable[dict]) -> dict:
         "darkness_margin": margin,
         "states": states,
     }
+
+
+def _state_from_record(record: dict) -> dict:
+    state = {
+        "label": record.get("label", record["choice"]),
+        "prelabel": record["prelabel"],
+        "darkness_score": record["darkness_score"],
+        "crop_path": record.get("crop_path"),
+    }
+    for key in MODEL_STATE_KEYS:
+        if key in record:
+            state[key] = record[key]
+    return state

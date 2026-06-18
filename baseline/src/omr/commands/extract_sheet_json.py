@@ -5,11 +5,12 @@ from __future__ import annotations
 import argparse
 import json
 from pathlib import Path
+import sys
 
 PROJECT_ROOT = Path(__file__).resolve().parents[3]
 
 from omr.cli_utils import write_json_file
-from omr.sheet_pipeline import ExtractionThresholds, extract_sheet
+from omr.sheet_pipeline import BubbleModelSettings, ExtractionThresholds, extract_sheet
 from omr.template import load_template
 
 
@@ -19,11 +20,25 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--template", default="data/labels/template_tnthpt.json")
     parser.add_argument("--output", default="", help="Optional output JSON path. Defaults to stdout.")
     parser.add_argument("--warped-output", default="", help="Optional path to save the warped sheet image.")
+    parser.add_argument("--bbox-output", default="", help="Optional path to save warped sheet with bubble bboxes.")
     parser.add_argument("--crop-output-dir", default="", help="Optional directory to save all bubble crops.")
     parser.add_argument("--blank-threshold", type=float, default=0.025)
-    parser.add_argument("--filled-threshold", type=float, default=0.04)
+    parser.add_argument("--filled-threshold", type=float, default=0.05)
     parser.add_argument("--identity-filled-threshold", type=float, default=0.06)
     parser.add_argument("--identity-margin-threshold", type=float, default=0.03)
+    parser.add_argument(
+        "--bubble-classifier",
+        action="store_true",
+        help="Use bubble_classifier ResNet inference instead of rule labels.",
+    )
+    parser.add_argument(
+        "--bubble-model-path",
+        default="",
+        help="Optional classifier checkpoint path. Defaults to bubble_classifier's best_model.pt.",
+    )
+    parser.add_argument("--bubble-filled-threshold", type=float, default=0.90)
+    parser.add_argument("--bubble-margin-threshold", type=float, default=0.10)
+    parser.add_argument("--bubble-batch-size", type=int, default=256)
     return parser.parse_args()
 
 
@@ -55,17 +70,42 @@ def emit_result(result: dict, output_path: Path | None) -> None:
     print(f"output={output_path}")
 
 
+def load_bubble_classifier(model_path: str, filled_threshold: float):
+    repo_root = PROJECT_ROOT.parent
+    if str(repo_root) not in sys.path:
+        sys.path.insert(0, str(repo_root))
+
+    from bubble_classifier import BubbleClassifier
+
+    kwargs = {"filled_threshold": filled_threshold}
+    if model_path:
+        path = Path(model_path)
+        kwargs["model_path"] = path if path.is_absolute() else repo_root / path
+    return BubbleClassifier(**kwargs)
+
+
 def main() -> int:
     args = parse_args()
     template = load_template(resolve_project_path(args.template) or PROJECT_ROOT / args.template)
     output_path = resolve_project_path(args.output)
     warped_output_path = resolve_project_path(args.warped_output)
+    bbox_output_path = resolve_project_path(args.bbox_output)
     crop_output_dir = resolve_project_path(args.crop_output_dir)
     thresholds = ExtractionThresholds(
         blank=args.blank_threshold,
         filled=args.filled_threshold,
         identity_filled=args.identity_filled_threshold,
         identity_margin=args.identity_margin_threshold,
+    )
+    bubble_classifier = (
+        load_bubble_classifier(args.bubble_model_path, args.bubble_filled_threshold)
+        if args.bubble_classifier
+        else None
+    )
+    bubble_model_settings = BubbleModelSettings(
+        filled_threshold=args.bubble_filled_threshold,
+        margin_threshold=args.bubble_margin_threshold,
+        batch_size=args.bubble_batch_size,
     )
 
     try:
@@ -74,8 +114,11 @@ def main() -> int:
             template,
             project_root=PROJECT_ROOT,
             thresholds=thresholds,
+            bubble_classifier=bubble_classifier,
+            bubble_model_settings=bubble_model_settings,
             crop_output_dir=crop_output_dir,
             warped_output_path=warped_output_path,
+            bbox_overlay_path=bbox_output_path,
         )
     except Exception as exc:  # noqa: BLE001 - CLI should return machine-readable failure
         result = {

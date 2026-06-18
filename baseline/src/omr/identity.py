@@ -45,6 +45,7 @@ def relabel_identity_groups(
     *,
     filled_threshold: float,
     margin_threshold: float,
+    score_key: str = "darkness_score",
     output_dir: Path | None = None,
     project_root: Path | None = None,
 ) -> None:
@@ -55,19 +56,19 @@ def relabel_identity_groups(
             groups[(record["image_id"], record["item_id"])].append(record)
 
     for records in groups.values():
-        records.sort(key=lambda record: float(record["darkness_score"]), reverse=True)
+        records.sort(key=lambda record: float(record.get(score_key) or 0.0), reverse=True)
         if not records:
             continue
 
-        top_score = float(records[0]["darkness_score"])
-        second_score = float(records[1]["darkness_score"]) if len(records) > 1 else 0.0
+        top_score = float(records[0].get(score_key) or 0.0)
+        second_score = float(records[1].get(score_key) or 0.0) if len(records) > 1 else 0.0
         if top_score < filled_threshold:
             labels = {record["spec_id"]: "blank" for record in records}
         elif top_score - second_score < margin_threshold:
             labels = {
                 record["spec_id"]: (
                     "ambiguous"
-                    if top_score - float(record["darkness_score"]) <= margin_threshold
+                    if top_score - float(record.get(score_key) or 0.0) <= margin_threshold
                     else "blank"
                 )
                 for record in records
@@ -83,11 +84,11 @@ def relabel_identity_groups(
             if record["prelabel"] == new_label:
                 continue
 
-            _move_crop_if_saved(record, new_label, output_dir=output_dir, project_root=project_root)
+            move_crop_if_saved(record, new_label, output_dir=output_dir, project_root=project_root)
             record["prelabel"] = new_label
 
 
-def _move_crop_if_saved(
+def move_crop_if_saved(
     record: dict,
     new_label: str,
     *,
@@ -107,6 +108,9 @@ def _move_crop_if_saved(
     if old_path.exists():
         old_path.replace(new_path)
     record["crop_path"] = new_path.relative_to(project_root).as_posix()
+
+
+_move_crop_if_saved = move_crop_if_saved
 
 
 def decode_identity(groups: dict[str, list[dict]], field: str, digit_count: int) -> dict:
