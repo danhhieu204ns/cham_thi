@@ -1,0 +1,238 @@
+{
+  "template_id": "tnthpt_omr_v0",
+  "version": 0,
+  "status": "draft",
+  "needs_manual_verification": true,
+  "created_at": "2026-06-17",
+  "description": "Initial draft template for Vietnamese TNTHPT answer sheets. Coordinates are in canonical pixel space and must be verified on template_samples.txt before production use.",
+  "coordinate_system": {
+    "unit": "pixel",
+    "origin": "top_left",
+    "canonical_size": {
+      "width": 1650,
+      "height": 2363
+    }
+  },
+  "registration_marks": {
+    "description": "Expected black square marker centers after normalization. Used for sanity checks and future homography alignment.",
+    "centers": {
+      "top_left": [62, 74],
+      "top_right": [1604, 78],
+      "part1_left_top": [62, 795],
+      "part1_right_top": [1602, 801],
+      "part1_left_bottom": [61, 1312],
+      "part1_right_bottom": [1601, 1316],
+      "part2_left_bottom": [58, 1642],
+      "part2_right_bottom": [1601, 1645],
+      "bottom_left": [57, 2313],
+      "bottom_right": [1600, 2317]
+    },
+    "expected_box_size": [30, 30],
+    "tolerance_px": 18
+  },
+  "regions": {
+    "student_info": {
+      "bbox": [70, 190, 1100, 715],
+      "purpose": "privacy_mask_and_visual_context"
+    },
+    "sbd": {
+      "bbox": [1135, 205, 1395, 746],
+      "purpose": "student_id_digits"
+    },
+    "exam_code": {
+      "bbox": [1425, 205, 1552, 746],
+      "purpose": "exam_code_digits"
+    },
+    "part1": {
+      "bbox": [70, 780, 1545, 1290],
+      "purpose": "multiple_choice_abcd"
+    },
+    "part2": {
+      "bbox": [70, 1295, 1545, 1625],
+      "purpose": "true_false"
+    },
+    "part3": {
+      "bbox": [70, 1625, 1545, 2290],
+      "purpose": "short_answer_bubble_grid"
+    }
+  },
+  "bubble_crop": {
+    "size": [36, 36],
+    "padding": 10
+  },
+  "grids": {
+    "part1": {
+      "choices": ["A", "B", "C", "D"],
+      "columns": [
+        {
+          "question_start": 1,
+          "question_count": 10,
+          "bbox": [95, 835, 415, 1285],
+          "choice_x": [181, 246, 311, 377],
+          "row_y_start": 897.4,
+          "row_y_step": 39.804
+        },
+        {
+          "question_start": 11,
+          "question_count": 10,
+          "bbox": [468, 835, 788, 1285],
+          "choice_x": [550, 616, 681, 747],
+          "row_y_start": 898.8,
+          "row_y_step": 39.76
+        },
+        {
+          "question_start": 21,
+          "question_count": 10,
+          "bbox": [842, 835, 1162, 1285],
+          "choice_x": [921, 987, 1053, 1117],
+          "row_y_start": 899.9,
+          "row_y_step": 39.789
+        },
+        {
+          "question_start": 31,
+          "question_count": 10,
+          "bbox": [1214, 835, 1534, 1285],
+          "choice_x": [1291, 1357, 1422, 1487],
+          "row_y_start": 901.2,
+          "row_y_step": 39.716
+        }
+      ]
+    },
+    "sbd": {
+      "digit_count": 8,
+      "digits": ["0", "1", "2", "3", "4", "5", "6", "7", "8", "9"],
+      "bbox": [1135, 205, 1395, 746],
+      "column_x": [1154, 1186, 1219, 1249, 1282, 1313, 1344, 1376],
+      "row_y_start": 304,
+      "row_y_step": 46.5
+    },
+    "exam_code": {
+      "digit_count": 4,
+      "digits": ["0", "1", "2", "3", "4", "5", "6", "7", "8", "9"],
+      "bbox": [1425, 205, 1552, 746],
+      "column_x": [1439, 1472, 1505, 1537],
+      "row_y_start": 304,
+      "row_y_step": 46.5
+    },
+    "part2": {
+      "choices": ["T", "F"],
+      "choice_labels": {
+        "T": "Dung",
+        "F": "Sai"
+      },
+      "statements": ["a", "b", "c", "d"],
+      "row_y_start": 1459.4,
+      "row_y_step": 39.6,
+      "questions": [
+        {
+          "question_number": 1,
+          "bbox": [96, 1343, 273, 1609],
+          "choice_x": [180, 245]
+        },
+        {
+          "question_number": 2,
+          "bbox": [274, 1343, 417, 1609],
+          "choice_x": [311, 377]
+        },
+        {
+          "question_number": 3,
+          "bbox": [468, 1343, 646, 1609],
+          "choice_x": [549, 615]
+        },
+        {
+          "question_number": 4,
+          "bbox": [647, 1343, 790, 1609],
+          "choice_x": [681, 747]
+        },
+        {
+          "question_number": 5,
+          "bbox": [842, 1343, 1019, 1609],
+          "choice_x": [919, 985]
+        },
+        {
+          "question_number": 6,
+          "bbox": [1020, 1343, 1163, 1609],
+          "choice_x": [1051, 1116]
+        },
+        {
+          "question_number": 7,
+          "bbox": [1214, 1343, 1391, 1609],
+          "choice_x": [1288, 1355]
+        },
+        {
+          "question_number": 8,
+          "bbox": [1392, 1343, 1535, 1609],
+          "choice_x": [1419, 1487]
+        }
+      ]
+    },
+    "part3": {
+      "digit_choices": ["0", "1", "2", "3", "4", "5", "6", "7", "8", "9"],
+      "slot_count": 4,
+      "row_minus_y": 1759,
+      "row_comma_y": 1803,
+      "digit_row_y_start": 1847.7,
+      "digit_row_y_step": 43.724,
+      "questions": [
+        {
+          "question_number": 1,
+          "bbox": [96, 1680, 336, 2258],
+          "column_x": [171, 210, 249, 289],
+          "minus_x": 171,
+          "comma_x": [211, 249]
+        },
+        {
+          "question_number": 2,
+          "bbox": [337, 1680, 573, 2258],
+          "column_x": [406, 445, 485, 525],
+          "minus_x": 407,
+          "comma_x": [447, 486]
+        },
+        {
+          "question_number": 3,
+          "bbox": [574, 1680, 811, 2258],
+          "column_x": [643, 681, 721, 760],
+          "minus_x": 643,
+          "comma_x": [683, 721]
+        },
+        {
+          "question_number": 4,
+          "bbox": [812, 1680, 1049, 2258],
+          "column_x": [879, 918, 957, 997],
+          "minus_x": 879,
+          "comma_x": [919, 958]
+        },
+        {
+          "question_number": 5,
+          "bbox": [1050, 1680, 1286, 2258],
+          "column_x": [1115, 1155, 1194, 1233],
+          "minus_x": 1115,
+          "comma_x": [1155, 1194]
+        },
+        {
+          "question_number": 6,
+          "bbox": [1287, 1680, 1534, 2258],
+          "column_x": [1351, 1391, 1431, 1470],
+          "minus_x": 1352,
+          "comma_x": [1391, 1431]
+        }
+      ]
+    }
+  },
+  "decode_policy": {
+    "bubble_classes": ["blank", "filled", "ambiguous", "invalid"],
+    "need_review_reasons": [
+      "blank_question",
+      "multi_mark",
+      "ambiguous_bubble",
+      "invalid_bubble",
+      "low_confidence",
+      "alignment_failed"
+    ]
+  },
+  "notes": [
+    "Coordinates were initialized from visual inspection and marker detection on the current scanned sheet set.",
+    "Before using this template for scoring, verify and adjust coordinates with data/labels/template_samples.txt.",
+    "Part I, Part II, and Part III grid coordinates were refined from marker-aligned warped sheets."
+  ]
+}

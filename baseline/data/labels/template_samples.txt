@@ -1,0 +1,11 @@
+# image_id	relative_path	width	height
+phieu_thi_022	phieu_thi/phieu_thi_022.jpg	1648	2366
+phieu_thi_030	phieu_thi/phieu_thi_030.jpg	1651	2363
+phieu_thi_037	phieu_thi/phieu_thi_037.jpg	1648	2357
+phieu_thi_080	phieu_thi/phieu_thi_080.jpg	1650	2365
+phieu_thi_128	phieu_thi/phieu_thi_128.jpg	1648	2358
+phieu_thi_141	phieu_thi/phieu_thi_141.jpg	1648	2360
+phieu_thi_144	phieu_thi/phieu_thi_144.jpg	1653	2360
+phieu_thi_154	phieu_thi/phieu_thi_154.jpg	1648	2363
+phieu_thi_160	phieu_thi/phieu_thi_160.jpg	1648	2365
+phieu_thi_163	phieu_thi/phieu_thi_163.jpg	1651	2360
