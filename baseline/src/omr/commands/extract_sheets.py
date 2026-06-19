@@ -55,6 +55,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--run-dir", required=True)
     parser.add_argument("--blank-threshold", type=float, default=0.025)
     parser.add_argument("--filled-threshold", type=float, default=0.05)
+    parser.add_argument("--answer-margin-threshold", type=float, default=0.025)
     parser.add_argument("--identity-filled-threshold", type=float, default=0.06)
     parser.add_argument("--identity-margin-threshold", type=float, default=0.03)
     parser.add_argument(
@@ -145,17 +146,21 @@ def copy_visual_images(
     for path in warped_paths[:limit]:
         target = image_dir / path.name
         shutil.copy2(path, target)
-        copied.append(target.relative_to(project_root).as_posix())
+        copied.append(relative_path(target, project_root))
     return copied
+
+
+def relative_path(path: Path, project_root: Path) -> str:
+    try:
+        return path.resolve().relative_to(project_root.resolve()).as_posix()
+    except ValueError:
+        return path.as_posix()
 
 
 def relative_paths(paths: list[Path], project_root: Path) -> list[str]:
     values = []
     for path in paths:
-        try:
-            values.append(path.relative_to(project_root).as_posix())
-        except ValueError:
-            values.append(path.as_posix())
+        values.append(relative_path(path, project_root))
     return values
 
 
@@ -182,12 +187,18 @@ def extraction_summary(records: list[dict]) -> dict:
     part3_counts: Counter[str] = Counter()
     identity_counts: Counter[str] = Counter()
     review_total = 0
+    auto_pass_total = 0
+    confidence_values = []
 
     for record in ok_records:
         part1_counts.update(record.get("part1", {}).get("counts", {}))
         part2_counts.update(record.get("part2", {}).get("counts", {}))
         part3_counts.update(record.get("part3", {}).get("counts", {}))
         review_total += review_count(record)
+        confidence = record.get("confidence", {})
+        auto_pass_total += int(bool(confidence.get("auto_pass")))
+        if confidence.get("sheet_confidence") is not None:
+            confidence_values.append(float(confidence["sheet_confidence"]))
         identity = record.get("identity", {})
         for field in ("sbd", "exam_code"):
             status = identity.get(field, {}).get("status")
@@ -198,7 +209,14 @@ def extraction_summary(records: list[dict]) -> dict:
         "total": len(records),
         "ok": len(ok_records),
         "error": errors,
+        "auto_pass": auto_pass_total,
         "review_item_count": review_total,
+        "min_sheet_confidence": round(min(confidence_values), 6) if confidence_values else None,
+        "avg_sheet_confidence": (
+            round(sum(confidence_values) / len(confidence_values), 6)
+            if confidence_values
+            else None
+        ),
         "identity_status_counts": dict(sorted(identity_counts.items())),
         "part1_status_counts": dict(sorted(part1_counts.items())),
         "part2_status_counts": dict(sorted(part2_counts.items())),
@@ -232,6 +250,7 @@ def main() -> int:
     thresholds = ExtractionThresholds(
         blank=args.blank_threshold,
         filled=args.filled_threshold,
+        answer_margin=args.answer_margin_threshold,
         identity_filled=args.identity_filled_threshold,
         identity_margin=args.identity_margin_threshold,
     )
@@ -320,7 +339,7 @@ def main() -> int:
         "passed": passed,
         "metadata": metadata_path.relative_to(project_root).as_posix(),
         "template": template_path.relative_to(project_root).as_posix(),
-        "output_jsonl": output_jsonl_path.relative_to(project_root).as_posix(),
+        "output_jsonl": relative_path(output_jsonl_path, project_root),
         "bubble_classifier": (
             {
                 "model_path": str(getattr(bubble_classifier, "model_path", "unknown")),
@@ -332,22 +351,22 @@ def main() -> int:
             else None
         ),
         "warped_output_dir": (
-            warped_output_dir.relative_to(project_root).as_posix()
+            relative_path(warped_output_dir, project_root)
             if warped_output_dir is not None
             else None
         ),
         "crop_output_dir": (
-            crop_output_dir.relative_to(project_root).as_posix()
+            relative_path(crop_output_dir, project_root)
             if crop_output_dir is not None
             else None
         ),
         "contact_sheet": (
-            contact_sheet_path.relative_to(project_root).as_posix()
+            relative_path(contact_sheet_path, project_root)
             if contact_sheet_path is not None
             else None
         ),
         "bbox_contact_sheet": (
-            bbox_contact_sheet_path.relative_to(project_root).as_posix()
+            relative_path(bbox_contact_sheet_path, project_root)
             if bbox_contact_sheet_path is not None
             else None
         ),
@@ -369,7 +388,9 @@ def main() -> int:
         f"- Total sheets: {result['total']}",
         f"- Extracted successfully: {result['ok']}",
         f"- Errors: {result['error']}",
+        f"- Auto-pass sheets: {result['auto_pass']}",
         f"- Review items: {result['review_item_count']}",
+        f"- Sheet confidence: min `{result['min_sheet_confidence']}`, avg `{result['avg_sheet_confidence']}`",
         f"- Identity status counts: `{result['identity_status_counts']}`",
         f"- Part I status counts: `{result['part1_status_counts']}`",
         f"- Part II status counts: `{result['part2_status_counts']}`",

@@ -33,9 +33,10 @@ def relabel_groups_by_score(
 
         top_score = float(records[0].get(score_key) or 0.0)
         second_score = float(records[1].get(score_key) or 0.0) if len(records) > 1 else 0.0
+        margin = top_score - second_score
         if top_score < filled_threshold:
             labels = {record["spec_id"]: "blank" for record in records}
-        elif len(records) > 1 and top_score - second_score < margin_threshold:
+        elif len(records) > 1 and margin < margin_threshold:
             labels = {
                 record["spec_id"]: (
                     "ambiguous"
@@ -51,7 +52,16 @@ def relabel_groups_by_score(
             }
 
         for record in records:
+            record["group_score_key"] = score_key
+            record["group_top_score"] = round(top_score, 6)
+            record["group_second_score"] = round(second_score, 6)
+            record["group_score_margin"] = round(margin, 6)
+            record["group_filled_threshold"] = filled_threshold
+            record["group_margin_threshold"] = margin_threshold
+            record["group_relabel_source"] = "ranked_score"
             new_label = labels[record["spec_id"]]
             if record["prelabel"] != new_label:
                 move_crop_if_saved(record, new_label, output_dir=output_dir, project_root=project_root)
                 record["prelabel"] = new_label
+            if record.get("prelabel_source") == "adaptive_rule":
+                record["prelabel_source"] = "adaptive_rule_group"

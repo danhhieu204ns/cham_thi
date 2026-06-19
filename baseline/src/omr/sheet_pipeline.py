@@ -15,8 +15,10 @@ from PIL import Image, ImageDraw
 
 from . import exam_code, part1, part2, part3, sbd
 from .bubble_crops import crop_and_prelabel
+from .grid_refinement import grid_block_for_spec, refine_grid_specs
 from .group_relabel import relabel_groups_by_score
 from .identity import crop_output_path, relabel_identity_groups
+from .local_alignment import align_sheet_blocks_locally
 from .markers import detect_registration_markers
 from .template import canonical_size
 from .warp import warp_from_markers
@@ -26,6 +28,7 @@ from .warp import warp_from_markers
 class ExtractionThresholds:
     blank: float = 0.025
     filled: float = 0.08
+    answer_margin: float = 0.025
     identity_filled: float = 0.07
     identity_margin: float = 0.03
 
@@ -45,6 +48,14 @@ def build_all_specs(template: dict) -> list[dict]:
         *part2.build_specs(template),
         *part3.build_specs(template),
     ]
+
+
+def alignment_block_for_spec(spec: dict) -> str:
+    if spec.get("alignment_block"):
+        return str(spec["alignment_block"])
+    if spec.get("section") == "identity":
+        return "identity"
+    return str(spec.get("section") or "unknown")
 
 
 def group_by_item(records: Iterable[dict]) -> dict[str, list[dict]]:
@@ -86,20 +97,23 @@ def warp_sheet_image(
         target_markers=target_markers,
         tolerance_px=max(35.0, marker_tolerance * 2.0),
     )
-    warped, matrix = warp_from_markers(
+    global_warped, matrix = warp_from_markers(
         image=image,
         source_markers=source_markers,
         target_markers=target_markers,
         output_size=output_size,
     )
+    warped, local_alignment = align_sheet_blocks_locally(global_warped, template)
     return warped, {
         "status": "ok",
+        "method": "global_homography_plus_local_blocks",
         "markers_found": sorted(source_markers),
         "markers": {
             key: [round(value[0], 2), round(value[1], 2)]
             for key, value in sorted(source_markers.items())
         },
         "matrix": np.round(matrix, 6).tolist(),
+        "local_alignment": local_alignment,
     }
 
 
@@ -171,6 +185,8 @@ def crop_specs_from_image(
     *,
     sheet_meta: dict,
     thresholds: ExtractionThresholds,
+    alignment_blocks: dict[str, dict] | None = None,
+    grid_refinement_blocks: dict[str, dict] | None = None,
     bubble_classifier: object | None = None,
     bubble_model_settings: BubbleModelSettings | None = None,
     output_dir: Path | None = None,
@@ -178,6 +194,8 @@ def crop_specs_from_image(
 ) -> list[dict]:
     crop_records: list[dict] = []
     crops_by_spec_id = {}
+    alignment_blocks = alignment_blocks or {}
+    grid_refinement_blocks = grid_refinement_blocks or {}
     for spec in specs:
         bbox = tuple(int(value) for value in spec["bbox"])
         crop_result = crop_and_prelabel(
@@ -209,9 +227,16 @@ def crop_specs_from_image(
                 "_crop_name": crop_name,
                 **sheet_meta,
                 "darkness_score": round(crop_result.darkness_score, 6),
+                "fill_score": round(crop_result.fill_score, 6),
+                "ink_ratio_inside": round(crop_result.ink_ratio_inside, 6),
+                "background_noise": round(crop_result.background_noise, 6),
+                "darkness_contrast": round(crop_result.darkness_contrast, 6),
+                "connected_component_score": round(crop_result.connected_component_score, 6),
                 "prelabel": crop_result.prelabel,
-                "prelabel_source": "darkness_rule",
+                "prelabel_source": "adaptive_rule",
                 "crop_path": crop_path_value,
+                **alignment_metadata_for_spec(spec, alignment_blocks),
+                **grid_refinement_metadata_for_spec(spec, grid_refinement_blocks),
             }
         )
         crops_by_spec_id[spec["spec_id"]] = crop_result.crop
@@ -232,8 +257,55 @@ def crop_specs_from_image(
             output_dir=output_dir,
             project_root=project_root,
         )
+    else:
+        answer_records = [
+            record
+            for record in crop_records
+            if record.get("section") in {"part1", "part2", "part3"}
+        ]
+        relabel_groups_by_score(
+            answer_records,
+            filled_threshold=thresholds.filled,
+            margin_threshold=thresholds.answer_margin,
+            score_key="fill_score",
+            output_dir=output_dir,
+            project_root=project_root,
+        )
 
     return crop_records
+
+
+def alignment_metadata_for_spec(spec: dict, alignment_blocks: dict[str, dict]) -> dict:
+    block_name = alignment_block_for_spec(spec)
+    block_info = alignment_blocks.get(block_name, {})
+    pre_correction = block_info.get("pre_correction") or {}
+    post_correction = block_info.get("post_correction") or {}
+    return {
+        "alignment_block": block_name,
+        "alignment_status": block_info.get("status"),
+        "alignment_confidence": block_info.get("confidence"),
+        "alignment_method": block_info.get("method"),
+        "alignment_marker_count": block_info.get("marker_count"),
+        "marker_pre_residual_px": pre_correction.get("rms_px"),
+        "marker_residual_px": post_correction.get("rms_px"),
+        "marker_max_residual_px": post_correction.get("max_px"),
+    }
+
+
+def grid_refinement_metadata_for_spec(spec: dict, grid_refinement_blocks: dict[str, dict]) -> dict:
+    block_name = grid_block_for_spec(spec)
+    block_info = grid_refinement_blocks.get(block_name, {})
+    return {
+        "grid_refinement_block": block_name,
+        "grid_refinement_status": block_info.get("status"),
+        "grid_refinement_confidence": block_info.get("confidence"),
+        "grid_refinement_method": block_info.get("method"),
+        "grid_refinement_matched_count": block_info.get("matched_count"),
+        "grid_refinement_inlier_count": block_info.get("inlier_count"),
+        "grid_residual_px": block_info.get("grid_residual_px"),
+        "grid_max_residual_px": block_info.get("max_residual_px"),
+        "grid_refinement_decode_allowed": block_info.get("decode_allowed"),
+    }
 
 
 def apply_bubble_classifier(
@@ -329,6 +401,120 @@ def summarize_extra_sections(decoded_sheets: list[dict], crop_records: list[dict
     }
 
 
+def sheet_status_from_warp(warp_info: dict) -> str:
+    grid_status = warp_info.get("grid_refinement", {}).get("status")
+    if grid_status == "ok":
+        return "ok"
+    if grid_status is not None:
+        return "need_review"
+
+    statuses = {
+        str(status)
+        for status in (
+            warp_info.get("status"),
+            warp_info.get("local_alignment", {}).get("status"),
+        )
+        if status is not None
+    }
+    if statuses <= {"ok"}:
+        return "ok"
+    return "need_review"
+
+
+def _numeric_confidence(value: object) -> float | None:
+    if value is None:
+        return None
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def _min_confidence(values: Iterable[object]) -> float | None:
+    numeric_values = [
+        value
+        for value in (_numeric_confidence(item) for item in values)
+        if value is not None
+    ]
+    if not numeric_values:
+        return None
+    return round(min(numeric_values), 6)
+
+
+def _alignment_confidence(warp_info: dict) -> float | None:
+    block_values = [
+        block.get("confidence")
+        for block in warp_info.get("local_alignment", {}).get("blocks", {}).values()
+    ]
+    return _min_confidence(block_values)
+
+
+def _grid_confidence(warp_info: dict) -> float | None:
+    block_values = [
+        block.get("confidence")
+        for block in warp_info.get("grid_refinement", {}).get("blocks", {}).values()
+    ]
+    return _min_confidence(block_values)
+
+
+def _decoded_item_confidence(
+    identity: dict,
+    part1_section: dict,
+    part2_section: dict,
+    part3_section: dict,
+) -> float | None:
+    values: list[object] = []
+    values.extend(field.get("confidence") for field in identity.values())
+    for section in (part1_section, part2_section, part3_section):
+        for answer in section.get("answers", {}).values():
+            if answer.get("status") != "blank":
+                values.append(answer.get("confidence"))
+    return _min_confidence(values)
+
+
+def _review_item_count(
+    identity: dict,
+    part1_section: dict,
+    part2_section: dict,
+    part3_section: dict,
+) -> int:
+    total = len(part1_section.get("review_items", []))
+    for section in (part2_section, part3_section):
+        counts = section.get("counts", {})
+        total += int(counts.get("need_review", 0))
+        total += int(counts.get("multi_mark", 0))
+    for field in identity.values():
+        if field.get("status") != "accepted":
+            total += 1
+    return total
+
+
+def build_confidence_summary(
+    *,
+    sheet_status: str,
+    warp_info: dict,
+    identity: dict,
+    part1_section: dict,
+    part2_section: dict,
+    part3_section: dict,
+) -> dict:
+    alignment_confidence = _alignment_confidence(warp_info)
+    grid_confidence = _grid_confidence(warp_info)
+    decoded_confidence = _decoded_item_confidence(identity, part1_section, part2_section, part3_section)
+    sheet_confidence = _min_confidence(
+        [alignment_confidence, grid_confidence, decoded_confidence]
+    )
+    review_count = _review_item_count(identity, part1_section, part2_section, part3_section)
+    return {
+        "sheet_confidence": sheet_confidence,
+        "alignment_confidence": alignment_confidence,
+        "grid_confidence": grid_confidence,
+        "decoded_item_confidence": decoded_confidence,
+        "review_item_count": review_count,
+        "auto_pass": sheet_status == "ok" and review_count == 0,
+    }
+
+
 def extract_sheet(
     input_path: Path,
     template: dict,
@@ -368,11 +554,18 @@ def extract_sheet(
     if crop_output_dir is not None and not crop_output_dir.is_absolute():
         crop_output_dir = project_root / crop_output_dir
 
+    specs = build_all_specs(template)
+    refined_specs, grid_refinement_info = refine_grid_specs(image, specs, template)
+    warp_info["grid_refinement"] = grid_refinement_info
+    sheet_status = sheet_status_from_warp(warp_info)
+
     crop_records = crop_specs_from_image(
         image,
-        build_all_specs(template),
+        refined_specs,
         sheet_meta=sheet_meta,
         thresholds=thresholds,
+        alignment_blocks=warp_info.get("local_alignment", {}).get("blocks", {}),
+        grid_refinement_blocks=grid_refinement_info.get("blocks", {}),
         bubble_classifier=bubble_classifier,
         bubble_model_settings=bubble_model_settings,
         output_dir=crop_output_dir,
@@ -383,6 +576,7 @@ def extract_sheet(
             crop_records,
             filled_threshold=thresholds.identity_filled,
             margin_threshold=thresholds.identity_margin,
+            score_key="fill_score",
             output_dir=crop_output_dir,
             project_root=project_root if crop_output_dir is not None else None,
         )
@@ -406,15 +600,28 @@ def extract_sheet(
         records_by_section[record["section"]].append(record)
 
     extra = decode_identity_and_written_sections(crop_records, template, sheet_meta)
+    part1_section = decode_part1_section(records_by_section["part1"])
+    identity_section = extra["identity"]
+    part2_section = extra["part2"]
+    part3_section = extra["part3"]
+    confidence = build_confidence_summary(
+        sheet_status=sheet_status,
+        warp_info=warp_info,
+        identity=identity_section,
+        part1_section=part1_section,
+        part2_section=part2_section,
+        part3_section=part3_section,
+    )
     return {
         "generated_at": datetime.now().isoformat(timespec="seconds"),
-        "status": "ok",
+        "status": sheet_status,
         "template_id": template.get("template_id"),
         **sheet_meta,
         "warp": warp_info,
         "thresholds": {
             "blank": thresholds.blank,
             "filled": thresholds.filled,
+            "answer_margin": thresholds.answer_margin,
             "identity_filled": thresholds.identity_filled,
             "identity_margin": thresholds.identity_margin,
             "bubble_classifier": (
@@ -433,10 +640,15 @@ def extract_sheet(
             "sbd_status": extra["identity"]["sbd"]["status"],
             "exam_code": extra["identity"]["exam_code"]["value"],
             "exam_code_status": extra["identity"]["exam_code"]["status"],
+            "alignment_status": warp_info.get("local_alignment", {}).get("status"),
+            "grid_refinement_status": warp_info.get("grid_refinement", {}).get("status"),
+            "sheet_confidence": confidence["sheet_confidence"],
+            "review_item_count": confidence["review_item_count"],
             "crop_count": len(crop_records),
         },
-        "identity": extra["identity"],
-        "part1": decode_part1_section(records_by_section["part1"]),
-        "part2": extra["part2"],
-        "part3": extra["part3"],
+        "confidence": confidence,
+        "identity": identity_section,
+        "part1": part1_section,
+        "part2": part2_section,
+        "part3": part3_section,
     }

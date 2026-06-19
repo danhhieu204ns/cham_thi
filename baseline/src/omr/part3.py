@@ -32,6 +32,8 @@ def build_specs(template: dict) -> list[dict]:
                 "label": "-",
                 "role": "sign",
                 "slot": 0,
+                "alignment_block": "part3",
+                "grid_block": f"part3:q{question_number:03d}",
                 "center": [minus_x, row_minus_y],
                 "bbox": list(bubble_bbox(minus_x, row_minus_y, size)),
             }
@@ -51,6 +53,8 @@ def build_specs(template: dict) -> list[dict]:
                     "label": ",",
                     "role": "comma",
                     "slot": comma_index,
+                    "alignment_block": "part3",
+                    "grid_block": f"part3:q{question_number:03d}",
                     "center": [center_x, row_comma_y],
                     "bbox": list(bubble_bbox(center_x, row_comma_y, size)),
                 }
@@ -71,6 +75,8 @@ def build_specs(template: dict) -> list[dict]:
                         "label": digit,
                         "role": "digit",
                         "slot": slot,
+                        "alignment_block": "part3",
+                        "grid_block": f"part3:q{question_number:03d}",
                         "center": [center_x, center_y],
                         "bbox": list(bubble_bbox(center_x, center_y, size)),
                     }
@@ -127,6 +133,21 @@ def decode(groups: dict[str, list[dict]]) -> dict:
             status = "blank"
         else:
             status = "accepted"
+        confidence_components = [sign, comma, *digit_groups]
+        if status == "blank":
+            confidence_components = [
+                component for component in confidence_components if component.get("confidence") is not None
+            ]
+        else:
+            confidence_components = [
+                component
+                for component in confidence_components
+                if component.get("status") != "blank" and component.get("confidence") is not None
+            ]
+        component_confidences = [
+            float(component["confidence"])
+            for component in confidence_components
+        ]
 
         answer = {
             "question_id": qid,
@@ -134,6 +155,7 @@ def decode(groups: dict[str, list[dict]]) -> dict:
             "value": decoded_value,
             "raw_value": raw_value,
             "status": status,
+            "confidence": round(min(component_confidences), 6) if component_confidences else None,
             "sign": sign,
             "comma": comma,
             "digits": digit_groups,

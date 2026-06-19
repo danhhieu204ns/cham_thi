@@ -33,6 +33,8 @@ def build_identity_specs(template: dict, field: str) -> list[dict]:
                     "label": digit,
                     "role": "digit",
                     "slot": column_index,
+                    "alignment_block": "identity",
+                    "grid_block": field,
                     "center": [center_x, center_y],
                     "bbox": list(bubble_bbox(center_x, center_y, size)),
                 }
@@ -62,9 +64,10 @@ def relabel_identity_groups(
 
         top_score = float(records[0].get(score_key) or 0.0)
         second_score = float(records[1].get(score_key) or 0.0) if len(records) > 1 else 0.0
+        margin = top_score - second_score
         if top_score < filled_threshold:
             labels = {record["spec_id"]: "blank" for record in records}
-        elif top_score - second_score < margin_threshold:
+        elif margin < margin_threshold:
             labels = {
                 record["spec_id"]: (
                     "ambiguous"
@@ -80,12 +83,23 @@ def relabel_identity_groups(
             }
 
         for record in records:
+            record["group_score_key"] = score_key
+            record["group_top_score"] = round(top_score, 6)
+            record["group_second_score"] = round(second_score, 6)
+            record["group_score_margin"] = round(margin, 6)
+            record["group_filled_threshold"] = filled_threshold
+            record["group_margin_threshold"] = margin_threshold
+            record["group_relabel_source"] = "identity_ranked_score"
             new_label = labels[record["spec_id"]]
             if record["prelabel"] == new_label:
+                if record.get("prelabel_source") == "adaptive_rule":
+                    record["prelabel_source"] = "adaptive_rule_group"
                 continue
 
             move_crop_if_saved(record, new_label, output_dir=output_dir, project_root=project_root)
             record["prelabel"] = new_label
+            if record.get("prelabel_source") == "adaptive_rule":
+                record["prelabel_source"] = "adaptive_rule_group"
 
 
 def move_crop_if_saved(
@@ -107,7 +121,10 @@ def move_crop_if_saved(
     new_path.parent.mkdir(parents=True, exist_ok=True)
     if old_path.exists():
         old_path.replace(new_path)
-    record["crop_path"] = new_path.relative_to(project_root).as_posix()
+    try:
+        record["crop_path"] = new_path.resolve().relative_to(project_root.resolve()).as_posix()
+    except ValueError:
+        record["crop_path"] = new_path.as_posix()
 
 
 _move_crop_if_saved = move_crop_if_saved
@@ -117,12 +134,15 @@ def decode_identity(groups: dict[str, list[dict]], field: str, digit_count: int)
     columns = []
     status_counts: Counter[str] = Counter()
     value_chars = []
+    confidences = []
     for index in range(1, digit_count + 1):
         item_id = f"{field}_{index:02d}"
         decoded = decode_group(groups.get(item_id, []))
         decoded["slot"] = index
         columns.append(decoded)
         status_counts[decoded["status"]] += 1
+        if decoded.get("confidence") is not None:
+            confidences.append(float(decoded["confidence"]))
         if decoded.get("selected") is not None:
             value_chars.append(decoded["selected"])
         elif decoded["status"] == "blank":
@@ -141,6 +161,7 @@ def decode_identity(groups: dict[str, list[dict]], field: str, digit_count: int)
         "field": field,
         "value": "".join(value_chars),
         "status": status,
+        "confidence": round(min(confidences), 6) if confidences else None,
         "columns": columns,
         "counts": dict(sorted(status_counts.items())),
     }

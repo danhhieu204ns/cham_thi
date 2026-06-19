@@ -24,6 +24,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--crop-output-dir", default="", help="Optional directory to save all bubble crops.")
     parser.add_argument("--blank-threshold", type=float, default=0.025)
     parser.add_argument("--filled-threshold", type=float, default=0.05)
+    parser.add_argument("--answer-margin-threshold", type=float, default=0.025)
     parser.add_argument("--identity-filled-threshold", type=float, default=0.06)
     parser.add_argument("--identity-margin-threshold", type=float, default=0.03)
     parser.add_argument(
@@ -94,6 +95,7 @@ def main() -> int:
     thresholds = ExtractionThresholds(
         blank=args.blank_threshold,
         filled=args.filled_threshold,
+        answer_margin=args.answer_margin_threshold,
         identity_filled=args.identity_filled_threshold,
         identity_margin=args.identity_margin_threshold,
     )

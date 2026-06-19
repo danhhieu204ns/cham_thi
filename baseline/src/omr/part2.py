@@ -33,6 +33,8 @@ def build_specs(template: dict) -> list[dict]:
                         "label": grid.get("choice_labels", {}).get(choice, choice),
                         "role": "true_false",
                         "slot": row_index + 1,
+                        "alignment_block": "part2",
+                        "grid_block": f"part2:q{question_number:03d}",
                         "center": [center_x, center_y],
                         "bbox": list(bubble_bbox(center_x, center_y, size)),
                     }

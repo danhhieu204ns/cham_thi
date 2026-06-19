@@ -168,7 +168,14 @@ def section_from_key(key: str) -> str:
 
 
 def empty_metric() -> dict[str, int | float]:
-    return {"total": 0, "correct": 0, "incorrect": 0, "accuracy": 0.0}
+    return {
+        "total": 0,
+        "correct": 0,
+        "incorrect": 0,
+        "accuracy": 0.0,
+        "false_accept": 0,
+        "false_accept_rate": 0.0,
+    }
 
 
 def finalize_metric(metric: dict[str, int | float]) -> dict[str, int | float]:
@@ -176,6 +183,11 @@ def finalize_metric(metric: dict[str, int | float]) -> dict[str, int | float]:
     correct = int(metric["correct"])
     metric["incorrect"] = total - correct
     metric["accuracy"] = round(correct / total, 6) if total else 0.0
+    metric["false_accept_rate"] = (
+        round(int(metric["false_accept"]) / total, 6)
+        if total
+        else 0.0
+    )
     return metric
 
 
@@ -199,13 +211,17 @@ def evaluate_against_ground_truth(
             section = section_from_key(key)
             actual = normalize_value(extracted.get(key, {}).get("value"))
             correct = actual == expected
+            need_review = bool(extracted.get(key, {}).get("need_review"))
 
             metrics["overall"]["total"] += 1
             metrics["by_section"][section]["total"] += 1
             if correct:
                 metrics["overall"]["correct"] += 1
                 metrics["by_section"][section]["correct"] += 1
-            else:
+            elif not need_review:
+                metrics["overall"]["false_accept"] += 1
+                metrics["by_section"][section]["false_accept"] += 1
+            if not correct:
                 errors.append(
                     {
                         "image_id": image_id,
@@ -215,6 +231,7 @@ def evaluate_against_ground_truth(
                         "expected": expected,
                         "actual": actual,
                         "status": extracted.get(key, {}).get("status"),
+                        "need_review": need_review,
                     }
                 )
 
@@ -338,6 +355,7 @@ def write_errors_csv(path: Path, rows: list[dict]) -> None:
         "expected",
         "actual",
         "status",
+        "need_review",
     ]
     with path.open("w", encoding="utf-8", newline="") as handle:
         writer = csv.DictWriter(handle, fieldnames=fieldnames, extrasaction="ignore")
@@ -348,7 +366,8 @@ def write_errors_csv(path: Path, rows: list[dict]) -> None:
 def metric_line(label: str, metric: dict) -> str:
     return (
         f"- {label}: {metric['correct']}/{metric['total']} "
-        f"({metric['accuracy']:.4f})"
+        f"({metric['accuracy']:.4f}), "
+        f"false_accept {metric['false_accept']} ({metric['false_accept_rate']:.4f})"
     )
 
 
