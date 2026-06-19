@@ -3,3 +3,4 @@ torch
 torchvision
 numpy==2.2.6
 opencv-python-headless==4.13.0.92
+pytest==7.4.3
