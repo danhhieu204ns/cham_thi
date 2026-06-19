@@ -62,7 +62,7 @@ def choice_order(choice: str) -> tuple[int, str]:
 def decode_group(records: Iterable[dict]) -> dict:
     records = sorted(records, key=lambda record: choice_order(str(record["choice"])))
     states = {
-        str(record["choice"]): _state_from_record(record)
+        str(record["choice"]): state_from_record(record)
         for record in records
     }
     filled = [record for record in records if record["prelabel"] == "filled"]
@@ -76,24 +76,24 @@ def decode_group(records: Iterable[dict]) -> dict:
         review_reasons.append("ambiguous_bubble")
     if len(filled) > 1:
         review_reasons.append("multi_mark")
-    alignment_needs_review, hard_alignment_failure = _alignment_gate(records)
+    alignment_needs_review, hard_alignment_failure = alignment_gate(records)
     if alignment_needs_review:
         review_reasons.append("alignment_failed")
 
-    filled = sorted(filled, key=_record_score, reverse=True)
+    filled = sorted(filled, key=record_score, reverse=True)
     selected_record = None if hard_alignment_failure or not filled else filled[0]
     selected = str(selected_record["choice"]) if selected_record is not None else None
 
-    selected_score = _record_score(selected_record) if selected_record is not None else None
+    selected_score = record_score(selected_record) if selected_record is not None else None
     other_scores = [
-        _record_score(record)
+        record_score(record)
         for record in records
         if selected is None or str(record["choice"]) != selected
     ]
     score_margin = None
     if selected_score is not None and other_scores:
         score_margin = round(selected_score - max(other_scores), 6)
-    confidence = _decode_confidence(
+    confidence = decode_confidence(
         selected_record,
         selected_score=selected_score,
         score_margin=score_margin,
@@ -133,7 +133,7 @@ def decode_group(records: Iterable[dict]) -> dict:
     }
 
 
-def _state_from_record(record: dict) -> dict:
+def state_from_record(record: dict) -> dict:
     state = {
         "label": record.get("label", record["choice"]),
         "prelabel": record["prelabel"],
@@ -159,7 +159,7 @@ def _clamp(value: float, lower: float = 0.0, upper: float = 1.0) -> float:
     return max(lower, min(upper, value))
 
 
-def _record_score(record: dict | None) -> float:
+def record_score(record: dict | None) -> float:
     if record is None:
         return 0.0
     score_key = record.get("group_score_key")
@@ -202,12 +202,12 @@ def _metadata_confidence(record: dict) -> float:
 def _blank_confidence(records: list[dict]) -> float | None:
     if not records:
         return None
-    top_score = max(_record_score(record) for record in records)
+    top_score = max(record_score(record) for record in records)
     filled_threshold = _as_float(records[0].get("group_filled_threshold"), 0.08) or 0.08
     return round(_clamp(1.0 - (top_score / max(filled_threshold, 1e-6))), 6)
 
 
-def _decode_confidence(
+def decode_confidence(
     selected_record: dict | None,
     *,
     selected_score: float | None,
@@ -225,7 +225,7 @@ def _decode_confidence(
     return round(confidence, 6)
 
 
-def _alignment_gate(records: Iterable[dict]) -> tuple[bool, bool]:
+def alignment_gate(records: Iterable[dict]) -> tuple[bool, bool]:
     needs_review = False
     hard_failure = False
     for record in records:

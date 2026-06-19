@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 from .decode_answers import decode_part1 as decode_part1_records
-from .decode_answers import summarize_decoded_sheets
 from .template import part1_bubbles
 
 

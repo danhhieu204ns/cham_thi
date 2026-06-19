@@ -127,9 +127,6 @@ def move_crop_if_saved(
         record["crop_path"] = new_path.as_posix()
 
 
-_move_crop_if_saved = move_crop_if_saved
-
-
 def decode_identity(groups: dict[str, list[dict]], field: str, digit_count: int) -> dict:
     columns = []
     status_counts: Counter[str] = Counter()

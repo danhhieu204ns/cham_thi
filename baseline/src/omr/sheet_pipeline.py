@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from collections import Counter, defaultdict
+from collections import defaultdict
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
@@ -376,28 +376,6 @@ def decode_part1_section(crop_records: list[dict]) -> dict:
         "answers": sheet["answers"],
         "review_items": sheet["review_items"],
         "counts": sheet["counts"],
-    }
-
-
-def summarize_extra_sections(decoded_sheets: list[dict], crop_records: list[dict]) -> dict:
-    identity_counts: Counter[str] = Counter()
-    part2_counts: Counter[str] = Counter()
-    part3_counts: Counter[str] = Counter()
-    crop_counts: Counter[str] = Counter()
-    for record in crop_records:
-        crop_counts[f"{record['section']}:{record['prelabel']}"] += 1
-    for sheet in decoded_sheets:
-        identity_counts[sheet["identity"]["sbd"]["status"]] += 1
-        identity_counts[sheet["identity"]["exam_code"]["status"]] += 1
-        part2_counts.update(sheet["part2"]["counts"])
-        part3_counts.update(sheet["part3"]["counts"])
-    return {
-        "sheet_count": len(decoded_sheets),
-        "crop_count": len(crop_records),
-        "identity_status_counts": dict(sorted(identity_counts.items())),
-        "part2_status_counts": dict(sorted(part2_counts.items())),
-        "part3_status_counts": dict(sorted(part3_counts.items())),
-        "crop_prelabel_counts": dict(sorted(crop_counts.items())),
     }
 
 
