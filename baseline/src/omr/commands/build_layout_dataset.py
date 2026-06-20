@@ -49,10 +49,15 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--metadata", default="data/labels/sheets.jsonl")
     parser.add_argument("--template", default="data/labels/template_tnthpt.json")
     parser.add_argument("--source-root", default=".")
-    parser.add_argument("--output-dir", default="../data_train/layout_v0")
+    parser.add_argument("--output-dir", default="../data_train/layout_v0_v2")
     parser.add_argument("--image-width", type=int, default=832)
     parser.add_argument("--image-height", type=int, default=1192)
-    parser.add_argument("--augmentations-per-scan", type=int, default=1)
+    parser.add_argument(
+        "--augmentations-per-scan",
+        type=int,
+        default=6,
+        help="Number of synthetic photo variants to generate for each base scan.",
+    )
     parser.add_argument("--include-clean", action=argparse.BooleanOptionalAction, default=True)
     parser.add_argument("--seed", type=int, default=20260619)
     parser.add_argument("--train-count", type=int, default=120)
@@ -353,10 +358,10 @@ def random_page_corners(
     output_height: int,
 ) -> np.ndarray:
     aspect = canonical_width / canonical_height
-    base_height = output_height * float(rng.uniform(0.86, 1.08))
+    base_height = output_height * float(rng.uniform(0.80, 1.12))
     base_width = base_height * aspect
-    if base_width > output_width * 1.08:
-        base_width = output_width * float(rng.uniform(0.86, 1.08))
+    if base_width > output_width * 1.14:
+        base_width = output_width * float(rng.uniform(0.80, 1.12))
         base_height = base_width / aspect
 
     rect = np.array(
@@ -368,23 +373,23 @@ def random_page_corners(
         ],
         dtype=np.float32,
     )
-    angle = math.radians(float(rng.uniform(-24.0, 24.0)))
+    angle = math.radians(float(rng.uniform(-30.0, 30.0)))
     rotation = np.array(
         [[math.cos(angle), -math.sin(angle)], [math.sin(angle), math.cos(angle)]],
         dtype=np.float32,
     )
     center = np.array(
         [
-            output_width / 2.0 + output_width * float(rng.uniform(-0.08, 0.08)),
-            output_height / 2.0 + output_height * float(rng.uniform(-0.08, 0.08)),
+            output_width / 2.0 + output_width * float(rng.uniform(-0.11, 0.11)),
+            output_height / 2.0 + output_height * float(rng.uniform(-0.11, 0.11)),
         ],
         dtype=np.float32,
     )
     corners = rect @ rotation.T + center
     jitter = np.column_stack(
         [
-            rng.uniform(-0.055, 0.055, size=4) * output_width,
-            rng.uniform(-0.055, 0.055, size=4) * output_height,
+            rng.uniform(-0.075, 0.075, size=4) * output_width,
+            rng.uniform(-0.075, 0.075, size=4) * output_height,
         ]
     ).astype(np.float32)
     return corners + jitter
@@ -400,8 +405,8 @@ def random_displacement_maps(
         zeros = np.zeros((output_height, output_width), dtype=np.float32)
         return zeros, zeros
 
-    grid_w = 5
-    grid_h = 7
+    grid_w = 6
+    grid_h = 8
     dx_small = rng.normal(0.0, max_abs_px / 2.5, size=(grid_h, grid_w)).astype(np.float32)
     dy_small = rng.normal(0.0, max_abs_px / 2.5, size=(grid_h, grid_w)).astype(np.float32)
     dx_map = cv2.resize(dx_small, (output_width, output_height), interpolation=cv2.INTER_CUBIC)
@@ -439,19 +444,19 @@ def random_geometry(
     )
     dst = random_page_corners(rng, canonical_width, canonical_height, output_width, output_height)
     homography = cv2.getPerspectiveTransform(src, dst.astype(np.float32))
-    elastic_max_abs_px = float(rng.uniform(2.0, 12.0))
+    elastic_max_abs_px = float(rng.uniform(3.0, 18.0))
     dx_map, dy_map = random_displacement_maps(rng, output_width, output_height, elastic_max_abs_px)
 
     occluded_markers: set[str] = set()
-    if marker_names and rng.random() < 0.35:
-        marker_count = int(rng.integers(1, min(3, len(marker_names)) + 1))
+    if marker_names and rng.random() < 0.50:
+        marker_count = int(rng.integers(1, min(4, len(marker_names)) + 1))
         occluded_markers = set(rng.choice(marker_names, size=marker_count, replace=False).tolist())
 
-    background_value = int(rng.integers(180, 242))
+    background_value = int(rng.integers(165, 248))
     background_color = (
-        int(np.clip(background_value + rng.integers(-8, 9), 0, 255)),
-        int(np.clip(background_value + rng.integers(-8, 9), 0, 255)),
-        int(np.clip(background_value + rng.integers(-8, 9), 0, 255)),
+        int(np.clip(background_value + rng.integers(-14, 15), 0, 255)),
+        int(np.clip(background_value + rng.integers(-14, 15), 0, 255)),
+        int(np.clip(background_value + rng.integers(-14, 15), 0, 255)),
     )
     return AugmentedGeometry(
         homography=homography,
@@ -535,14 +540,14 @@ def apply_photo_noise(
         return image
 
     result = image.astype(np.float32)
-    alpha = float(rng.uniform(0.78, 1.22))
-    beta = float(rng.uniform(-24.0, 24.0))
+    alpha = float(rng.uniform(0.65, 1.38))
+    beta = float(rng.uniform(-38.0, 38.0))
     result = result * alpha + beta
 
     height, width = result.shape[:2]
-    if rng.random() < 0.75:
-        x_gradient = np.linspace(0.75, 1.12, width, dtype=np.float32)
-        y_gradient = np.linspace(0.85, 1.10, height, dtype=np.float32)
+    if rng.random() < 0.85:
+        x_gradient = np.linspace(0.68, 1.18, width, dtype=np.float32)
+        y_gradient = np.linspace(0.74, 1.16, height, dtype=np.float32)
         if rng.random() < 0.5:
             x_gradient = x_gradient[::-1]
         if rng.random() < 0.5:
@@ -550,27 +555,44 @@ def apply_photo_noise(
         gradient = np.sqrt(y_gradient[:, None] * x_gradient[None, :])
         result *= gradient[:, :, None]
 
-    if rng.random() < 0.45:
+    if rng.random() < 0.60:
         center_x = float(rng.uniform(0, width))
         center_y = float(rng.uniform(0, height))
         radius = float(rng.uniform(width * 0.35, width * 0.85))
         xs, ys = np.meshgrid(np.arange(width), np.arange(height))
         distance = np.sqrt((xs - center_x) ** 2 + (ys - center_y) ** 2)
-        shadow = 1.0 - 0.28 * np.clip(1.0 - distance / radius, 0.0, 1.0)
+        strength = float(rng.uniform(0.18, 0.40))
+        shadow = 1.0 - strength * np.clip(1.0 - distance / radius, 0.0, 1.0)
         result *= shadow[:, :, None].astype(np.float32)
 
-    if rng.random() < 0.55:
-        sigma = float(rng.uniform(2.0, 9.0))
+    if rng.random() < 0.72:
+        sigma = float(rng.uniform(3.0, 14.0))
         noise = rng.normal(0.0, sigma, size=result.shape).astype(np.float32)
         result += noise
 
     result = np.clip(result, 0, 255).astype(np.uint8)
-    if rng.random() < 0.35:
-        kernel = int(rng.choice([3, 5]))
-        result = cv2.GaussianBlur(result, (kernel, kernel), float(rng.uniform(0.4, 1.2)))
+    if rng.random() < 0.45:
+        kernel = int(rng.choice([3, 5, 7]))
+        result = cv2.GaussianBlur(result, (kernel, kernel), float(rng.uniform(0.4, 1.7)))
 
-    if rng.random() < 0.55:
-        quality = int(rng.integers(55, 92))
+    if rng.random() < 0.30:
+        kernel_size = int(rng.choice([5, 7, 9, 11]))
+        kernel = np.zeros((kernel_size, kernel_size), dtype=np.float32)
+        if rng.random() < 0.5:
+            kernel[kernel_size // 2, :] = 1.0
+        else:
+            kernel[:, kernel_size // 2] = 1.0
+        rotation = cv2.getRotationMatrix2D(
+            (kernel_size / 2.0 - 0.5, kernel_size / 2.0 - 0.5),
+            float(rng.uniform(-18.0, 18.0)),
+            1.0,
+        )
+        kernel = cv2.warpAffine(kernel, rotation, (kernel_size, kernel_size))
+        kernel /= max(float(kernel.sum()), 1.0)
+        result = cv2.filter2D(result, -1, kernel)
+
+    if rng.random() < 0.70:
+        quality = int(rng.integers(30, 56) if rng.random() < 0.35 else rng.integers(55, 91))
         ok, encoded = cv2.imencode(".jpg", result, [int(cv2.IMWRITE_JPEG_QUALITY), quality])
         if ok:
             decoded = cv2.imdecode(encoded, cv2.IMREAD_COLOR)
@@ -640,11 +662,24 @@ def draw_marker_occlusions(
             continue
         x = int(round(float(marker["x"])))
         y = int(round(float(marker["y"])))
-        radius = int(rng.integers(12, 24))
-        color_value = int(rng.integers(205, 252))
+        radius = int(rng.integers(14, 32))
+        color_value = int(rng.integers(190, 256))
         color = (color_value, color_value, color_value)
-        cv2.rectangle(image, (x - radius, y - radius), (x + radius, y + radius), color, -1)
-        marker["visible"] = False
+        if rng.random() < 0.45:
+            cv2.rectangle(image, (x - radius, y - radius), (x + radius, y + radius), color, -1)
+            marker["visible"] = False
+        else:
+            offset_x = int(rng.integers(-radius, radius + 1))
+            offset_y = int(rng.integers(-radius, radius + 1))
+            half_w = int(rng.integers(max(6, radius // 2), radius + 8))
+            half_h = int(rng.integers(max(6, radius // 2), radius + 8))
+            cv2.rectangle(
+                image,
+                (x + offset_x - half_w, y + offset_y - half_h),
+                (x + offset_x + half_w, y + offset_y + half_h),
+                color,
+                -1,
+            )
         marker["occluded"] = True
 
 

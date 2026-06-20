@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from pathlib import Path
 
 import cv2
 import numpy as np
@@ -48,6 +49,111 @@ def _round_point(point: tuple[float, float]) -> list[float]:
 
 def _round_matrix(matrix: np.ndarray) -> list[list[float]]:
     return np.round(matrix, 6).tolist()
+
+
+def _safe_debug_name(value: str) -> str:
+    return "".join(char if char.isalnum() or char in {"-", "_"} else "_" for char in value)
+
+
+def _write_debug_image(path: Path, image: np.ndarray) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    cv2.imwrite(str(path), image, [int(cv2.IMWRITE_JPEG_QUALITY), 92])
+
+
+def _draw_marker_overlay(
+    image: np.ndarray,
+    markers: dict[str, tuple[float, float]],
+    target_markers: dict[str, list[int]],
+    *,
+    title: str,
+) -> np.ndarray:
+    overlay = image.copy()
+    for name, target in sorted(target_markers.items()):
+        cv2.drawMarker(
+            overlay,
+            (int(round(target[0])), int(round(target[1]))),
+            (180, 180, 180),
+            markerType=cv2.MARKER_CROSS,
+            markerSize=18,
+            thickness=1,
+        )
+    for name, point in sorted(markers.items()):
+        center = (int(round(point[0])), int(round(point[1])))
+        cv2.circle(overlay, center, 12, (0, 180, 255), 2)
+        cv2.putText(
+            overlay,
+            name,
+            (center[0] + 8, center[1] - 8),
+            cv2.FONT_HERSHEY_SIMPLEX,
+            0.55,
+            (0, 90, 220),
+            2,
+            cv2.LINE_AA,
+        )
+    cv2.putText(
+        overlay,
+        title,
+        (18, 34),
+        cv2.FONT_HERSHEY_SIMPLEX,
+        0.9,
+        (0, 0, 0),
+        4,
+        cv2.LINE_AA,
+    )
+    cv2.putText(
+        overlay,
+        title,
+        (18, 34),
+        cv2.FONT_HERSHEY_SIMPLEX,
+        0.9,
+        (255, 255, 255),
+        2,
+        cv2.LINE_AA,
+    )
+    return overlay
+
+
+def _draw_region_overlay(
+    image: np.ndarray,
+    regions: dict[str, list[int]],
+    *,
+    title: str,
+) -> np.ndarray:
+    overlay = image.copy()
+    for region_name, bbox in sorted(regions.items()):
+        x1, y1, x2, y2 = (int(value) for value in bbox)
+        cv2.rectangle(overlay, (x1, y1), (x2, y2), (34, 197, 94), 3)
+        cv2.putText(
+            overlay,
+            region_name,
+            (x1 + 4, max(18, y1 - 8)),
+            cv2.FONT_HERSHEY_SIMPLEX,
+            0.65,
+            (16, 120, 55),
+            2,
+            cv2.LINE_AA,
+        )
+    cv2.putText(
+        overlay,
+        title,
+        (18, 34),
+        cv2.FONT_HERSHEY_SIMPLEX,
+        0.9,
+        (0, 0, 0),
+        4,
+        cv2.LINE_AA,
+    )
+    cv2.putText(
+        overlay,
+        title,
+        (18, 34),
+        cv2.FONT_HERSHEY_SIMPLEX,
+        0.9,
+        (255, 255, 255),
+        2,
+        cv2.LINE_AA,
+    )
+    return overlay
 
 
 def _transform_points(matrix: np.ndarray, points: np.ndarray) -> np.ndarray:
@@ -221,6 +327,8 @@ def _overall_status(blocks: dict[str, dict]) -> str:
 def align_sheet_blocks_locally(
     warped: np.ndarray,
     template: dict,
+    *,
+    debug_dir: Path | None = None,
 ) -> tuple[np.ndarray, dict]:
     """Return a canonical page composed from locally aligned regions."""
     output_size = canonical_size(template)
@@ -235,6 +343,16 @@ def align_sheet_blocks_locally(
         target_markers=target_markers,
         tolerance_px=match_tolerance,
     )
+    if debug_dir is not None:
+        _write_debug_image(
+            debug_dir / "01_detected_markers.jpg",
+            _draw_marker_overlay(
+                warped,
+                detected_markers,
+                target_markers,
+                title="local alignment markers",
+            ),
+        )
     aligned = warped.copy()
     blocks: dict[str, dict] = {}
 
@@ -262,7 +380,28 @@ def align_sheet_blocks_locally(
             tuple(definition["regions"]),
             margin_px=region_margin,
         )
+        if debug_dir is not None:
+            safe_name = _safe_debug_name(block_name)
+            _write_debug_image(
+                debug_dir / f"02_block_{safe_name}_warped.jpg",
+                _draw_region_overlay(
+                    block_aligned,
+                    copied_regions,
+                    title=f"{block_name}: {transform.status}/{transform.method}",
+                ),
+            )
         blocks[block_name] = _transform_info(block_name, transform, copied_regions, target_markers)
+
+    if debug_dir is not None:
+        all_regions = {
+            f"{block}:{region}": bbox
+            for block, info in blocks.items()
+            for region, bbox in info.get("regions", {}).items()
+        }
+        _write_debug_image(
+            debug_dir / "03_local_aligned.jpg",
+            _draw_region_overlay(aligned, all_regions, title="local aligned pasted regions"),
+        )
 
     return aligned, {
         "status": _overall_status(blocks),

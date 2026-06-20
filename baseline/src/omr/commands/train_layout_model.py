@@ -31,21 +31,22 @@ REPO_ROOT = BASELINE_ROOT.parent
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Train a U-Net layout detector.")
-    parser.add_argument("--dataset-dir", default="data_train/layout_v0")
-    parser.add_argument("--output-dir", default="baseline/reports/layout_v0_runs/unet_416")
-    parser.add_argument("--epochs", type=int, default=30)
+    parser.add_argument("--dataset-dir", default="data_train/layout_v0_v2")
+    parser.add_argument("--output-dir", default="baseline/reports/layout_v0_runs/unet_v2")
+    parser.add_argument("--epochs", type=int, default=50)
     parser.add_argument("--batch-size", type=int, default=4)
     parser.add_argument("--lr", type=float, default=2e-4)
+    parser.add_argument("--min-lr", type=float, default=1e-6)
     parser.add_argument("--weight-decay", type=float, default=1e-4)
     parser.add_argument("--image-width", type=int, default=416)
     parser.add_argument("--image-height", type=int, default=596)
-    parser.add_argument("--base-channels", type=int, default=24)
+    parser.add_argument("--base-channels", type=int, default=48)
     parser.add_argument("--workers", type=int, default=0)
     parser.add_argument("--device", default="auto", choices=("auto", "cpu", "cuda"))
     parser.add_argument("--limit-train", type=int, default=0)
     parser.add_argument("--limit-val", type=int, default=0)
     parser.add_argument("--progress-every", type=int, default=20)
-    parser.add_argument("--pos-weights", default="3,30,10,6")
+    parser.add_argument("--pos-weights", default="3,50,10,6")
     parser.add_argument("--dice-weight", type=float, default=1.0)
     parser.add_argument("--mse-weight", type=float, default=0.25)
     parser.add_argument("--overwrite", action="store_true")
@@ -167,11 +168,12 @@ def checkpoint_data(
     *,
     model: torch.nn.Module,
     optimizer: torch.optim.Optimizer,
+    scheduler: Any | None,
     args: argparse.Namespace,
     epoch: int,
     metrics: dict[str, Any],
 ) -> dict[str, Any]:
-    return {
+    data = {
         "epoch": epoch,
         "args": vars(args),
         "image_size": [args.image_width, args.image_height],
@@ -184,6 +186,9 @@ def checkpoint_data(
         "optimizer_state": optimizer.state_dict(),
         "metrics": metrics,
     }
+    if scheduler is not None:
+        data["scheduler_state"] = scheduler.state_dict()
+    return data
 
 
 def main() -> int:
@@ -196,6 +201,8 @@ def main() -> int:
         raise ValueError("--epochs must be positive")
     if args.batch_size <= 0:
         raise ValueError("--batch-size must be positive")
+    if args.min_lr < 0:
+        raise ValueError("--min-lr must be >= 0")
     if args.image_width <= 0 or args.image_height <= 0:
         raise ValueError("--image-width and --image-height must be positive")
 
@@ -238,6 +245,11 @@ def main() -> int:
         base_channels=args.base_channels,
     ).to(device)
     optimizer = torch.optim.AdamW(model.parameters(), lr=args.lr, weight_decay=args.weight_decay)
+    scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(
+        optimizer,
+        T_max=args.epochs,
+        eta_min=args.min_lr,
+    )
 
     run_config = {
         **vars(args),
@@ -258,12 +270,14 @@ def main() -> int:
         print(f"cuda_name={torch.cuda.get_device_name(0)}", flush=True)
     print(f"train_samples={len(train_dataset)} val_samples={len(val_dataset)}", flush=True)
     print(f"image_size={image_size} batch_size={args.batch_size}", flush=True)
+    print(f"base_channels={args.base_channels} pos_weights={pos_weights}", flush=True)
 
     best_score = -1.0
     best_epoch = 0
     history_path = output_dir / "history.jsonl"
 
     for epoch in range(1, args.epochs + 1):
+        epoch_lr = float(optimizer.param_groups[0]["lr"])
         print(f"starting_epoch={epoch:03d}/{args.epochs}", flush=True)
         train_metrics = run_epoch(
             model=model,
@@ -288,13 +302,15 @@ def main() -> int:
                 optimizer=None,
             )
 
-        record = {"epoch": epoch, "train": train_metrics, "val": val_metrics}
+        record = {"epoch": epoch, "lr": epoch_lr, "train": train_metrics, "val": val_metrics}
+        scheduler.step()
         append_jsonl(record, history_path)
         save_json(record, output_dir / "last_metrics.json")
 
         checkpoint = checkpoint_data(
             model=model,
             optimizer=optimizer,
+            scheduler=scheduler,
             args=args,
             epoch=epoch,
             metrics=record,
@@ -314,6 +330,7 @@ def main() -> int:
             f"train_dice={train_metrics['mean_dice']:.4f} "
             f"val_loss={val_metrics['loss']:.4f} "
             f"val_dice={val_metrics['mean_dice']:.4f} "
+            f"lr={epoch_lr:.2e} "
             f"best_epoch={best_epoch:03d} best_val_dice={best_score:.4f}",
             flush=True,
         )

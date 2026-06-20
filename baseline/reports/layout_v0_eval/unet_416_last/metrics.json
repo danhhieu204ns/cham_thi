@@ -1,31 +1,31 @@
 {
-  "checkpoint": "/home/jovyan/cham_thi/baseline/reports/layout_v0_runs/unet_416/last_model.pt",
-  "dataset_dir": "/home/jovyan/cham_thi/data_train/layout_v0",
+  "checkpoint": "D:\\WORKSPACE\\cham_thi\\baseline\\reports\\layout_v0_runs\\unet_416\\last_model.pt",
+  "dataset_dir": "D:\\WORKSPACE\\cham_thi\\data_train\\layout_v0",
   "image_size": [
     1192,
     832
   ],
-  "loss": 0.4205571399493651,
-  "mean_dice": 0.8254946861233703,
+  "loss": 0.424534433605996,
+  "mean_dice": 0.8237439501717908,
   "peaks": {
     "bubbles": {
-      "f1": 0.9960935966393153,
+      "f1": 0.9961033734774203,
       "fn": 197,
-      "fp": 201,
+      "fp": 200,
       "match_radius_px": 5.0,
-      "mean_distance_px": 0.9498703357657468,
-      "precision": 0.9960544912060302,
+      "mean_distance_px": 0.9498458126910465,
+      "precision": 0.9960740435388572,
       "recall": 0.9961327051433059,
       "threshold": 0.25,
       "tp": 50743
     },
     "markers": {
-      "f1": 0.9770723104056437,
+      "f1": 0.9779346866725508,
       "fn": 3,
-      "fp": 23,
+      "fp": 22,
       "match_radius_px": 6.0,
       "mean_distance_px": 1.7152719849767668,
-      "precision": 0.9601386481802426,
+      "precision": 0.9618055555555556,
       "recall": 0.9946140035906643,
       "threshold": 0.35,
       "tp": 554
@@ -33,23 +33,23 @@
   },
   "pixel": {
     "bubble_heatmap": {
-      "dice": 0.773626787007661,
-      "mse": 0.00217743479879573
+      "dice": 0.7728226462996802,
+      "mse": 0.002177398535422981
     },
     "marker_heatmap": {
-      "dice": 0.6648966181879997,
-      "mse": 0.0001698975796567869
+      "dice": 0.6613112861382979,
+      "mse": 0.0001699121890768848
     },
     "page_mask": {
-      "dice": 0.997466171401678,
-      "mse": 0.0037539621857418256
+      "dice": 0.9973139783314694,
+      "mse": 0.0037539115335014435
     },
     "red_grid_mask": {
-      "dice": 0.8659891678961423,
-      "mse": 0.007762510117820718
+      "dice": 0.8635278899177158,
+      "mse": 0.007762615907598625
     }
   },
   "samples": 88,
   "split": "test",
-  "visuals_dir": "/home/jovyan/cham_thi/baseline/reports/layout_v0_eval/unet_416_last/visuals"
+  "visuals_dir": "D:\\WORKSPACE\\cham_thi\\baseline\\reports\\layout_v0_eval\\unet_416_last\\visuals"
 }

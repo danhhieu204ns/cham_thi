@@ -172,12 +172,8 @@ def layout_loss(
     dice_weight: float,
     mse_weight: float,
 ) -> torch.Tensor:
-    weights = torch.ones_like(targets)
-    for channel_index, pos_weight in enumerate(pos_weights):
-        weights[:, channel_index] += targets[:, channel_index] * (float(pos_weight) - 1.0)
-
-    bce = F.binary_cross_entropy_with_logits(logits, targets, reduction="none")
-    bce = (bce * weights).mean()
+    pos_weight = logits.new_tensor(pos_weights).view(1, -1, 1, 1)
+    bce = F.binary_cross_entropy_with_logits(logits, targets, pos_weight=pos_weight)
 
     probs = torch.sigmoid(logits)
     dims = (0, 2, 3)
@@ -247,3 +243,26 @@ def denormalize_image(image_tensor: torch.Tensor) -> np.ndarray:
     image = image_tensor.detach().cpu().numpy()
     image = np.clip((image * 0.5 + 0.5) * 255.0, 0, 255).astype(np.uint8)
     return image.transpose(1, 2, 0)
+
+
+def extract_heatmap_peaks(
+    probability: np.ndarray,
+    *,
+    threshold: float,
+    nms_radius: int,
+    max_peaks: int,
+) -> list[tuple[float, float, float]]:
+    kernel_size = max(1, nms_radius * 2 + 1)
+    kernel = np.ones((kernel_size, kernel_size), dtype=np.uint8)
+    local_max = cv2.dilate(probability.astype(np.float32), kernel)
+    mask = (probability >= threshold) & (probability >= local_max - 1e-6)
+    ys, xs = np.where(mask)
+    if len(xs) == 0:
+        return []
+
+    scores = probability[ys, xs]
+    order = np.argsort(-scores)
+    return [
+        (float(xs[index]), float(ys[index]), float(scores[index]))
+        for index in order[:max_peaks]
+    ]

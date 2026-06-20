@@ -52,6 +52,11 @@ def parse_args() -> argparse.Namespace:
         default="",
         help="Directory for warped sheet bbox overlays. Defaults to run-dir/visuals/bbox_images.",
     )
+    parser.add_argument(
+        "--debug-output-dir",
+        default="",
+        help="Optional directory for per-image step-by-step debug images.",
+    )
     parser.add_argument("--run-dir", required=True)
     parser.add_argument("--blank-threshold", type=float, default=0.025)
     parser.add_argument("--filled-threshold", type=float, default=0.05)
@@ -71,6 +76,16 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--bubble-filled-threshold", type=float, default=0.90)
     parser.add_argument("--bubble-margin-threshold", type=float, default=0.10)
     parser.add_argument("--bubble-batch-size", type=int, default=256)
+    parser.add_argument(
+        "--layout-checkpoint",
+        default="",
+        help="Optional layout_v0 checkpoint to use for marker-based warping.",
+    )
+    parser.add_argument("--layout-device", default="auto", choices=("auto", "cpu", "cuda"))
+    parser.add_argument("--layout-marker-threshold", type=float, default=0.25)
+    parser.add_argument("--layout-bubble-threshold", type=float, default=0.25)
+    parser.add_argument("--layout-max-marker-peaks", type=int, default=40)
+    parser.add_argument("--layout-marker-match-tolerance", type=float, default=55.0)
     parser.add_argument("--contact-sheet-width", type=int, default=320)
     parser.add_argument("--visual-limit", type=int, default=20)
     return parser.parse_args()
@@ -88,6 +103,38 @@ def load_bubble_classifier(model_path: str, filled_threshold: float):
         path = Path(model_path)
         kwargs["model_path"] = path if path.is_absolute() else repo_root / path
     return BubbleClassifier(**kwargs)
+
+
+def resolve_repo_path(value: str) -> Path:
+    path = Path(value)
+    if path.is_absolute():
+        return path
+    cwd_path = (Path.cwd() / path).resolve()
+    if cwd_path.exists():
+        return cwd_path
+    project_path = (PROJECT_ROOT / path).resolve()
+    if project_path.exists():
+        return project_path
+    return (PROJECT_ROOT.parent / path).resolve()
+
+
+def load_layout_detector(args: argparse.Namespace):
+    if not args.layout_checkpoint:
+        return None
+
+    from omr.layout_inference import LayoutDetector, LayoutDetectorSettings
+
+    settings = LayoutDetectorSettings(
+        marker_threshold=args.layout_marker_threshold,
+        bubble_threshold=args.layout_bubble_threshold,
+        max_marker_peaks=args.layout_max_marker_peaks,
+        marker_match_tolerance_px=args.layout_marker_match_tolerance,
+    )
+    return LayoutDetector(
+        resolve_repo_path(args.layout_checkpoint),
+        device=args.layout_device,
+        settings=settings,
+    )
 
 
 def make_contact_sheet(
@@ -233,6 +280,7 @@ def main() -> int:
     output_jsonl_path = project_root / args.output_jsonl
     warped_output_dir = project_root / args.warped_output_dir if args.warped_output_dir else None
     crop_output_dir = project_root / args.crop_output_dir if args.crop_output_dir else None
+    debug_output_dir = project_root / args.debug_output_dir if args.debug_output_dir else None
     run_dir = project_root / args.run_dir
     visuals_dir = run_dir / "visuals"
     bbox_output_dir = (
@@ -264,11 +312,12 @@ def main() -> int:
         margin_threshold=args.bubble_margin_threshold,
         batch_size=args.bubble_batch_size,
     )
+    layout_detector = load_layout_detector(args)
 
     extraction_records: list[dict] = []
     warped_paths: list[Path] = []
     bbox_paths: list[Path] = []
-    for metadata in metadata_records:
+    for index, metadata in enumerate(metadata_records, start=1):
         image_path = project_root / metadata["relative_path"]
         warped_output_path = (
             warped_output_dir / f"{metadata['image_id']}.jpg"
@@ -292,6 +341,8 @@ def main() -> int:
                 crop_output_dir=crop_output_dir,
                 warped_output_path=warped_output_path,
                 bbox_overlay_path=bbox_overlay_path,
+                layout_detector=layout_detector,
+                debug_output_dir=debug_output_dir,
             )
         except Exception as exc:  # noqa: BLE001 - keep per-sheet failure reason
             extracted = {
@@ -310,6 +361,10 @@ def main() -> int:
             warped_paths.append(warped_output_path)
         if extracted.get("status") == "ok" and bbox_overlay_path is not None:
             bbox_paths.append(bbox_overlay_path)
+        print(
+            f"{index}/{len(metadata_records)} {metadata['image_id']} status={extracted.get('status')}",
+            flush=True,
+        )
 
     write_jsonl_records(extraction_records, output_jsonl_path)
 
@@ -350,6 +405,19 @@ def main() -> int:
             if bubble_classifier is not None
             else None
         ),
+        "layout_detector": (
+            {
+                "checkpoint": str(getattr(layout_detector, "checkpoint_path", "unknown")),
+                "device": str(getattr(layout_detector, "device", "unknown")),
+                "image_size": list(getattr(layout_detector, "image_size", [])),
+                "marker_threshold": args.layout_marker_threshold,
+                "bubble_threshold": args.layout_bubble_threshold,
+                "max_marker_peaks": args.layout_max_marker_peaks,
+                "marker_match_tolerance": args.layout_marker_match_tolerance,
+            }
+            if layout_detector is not None
+            else None
+        ),
         "warped_output_dir": (
             relative_path(warped_output_dir, project_root)
             if warped_output_dir is not None
@@ -358,6 +426,11 @@ def main() -> int:
         "crop_output_dir": (
             relative_path(crop_output_dir, project_root)
             if crop_output_dir is not None
+            else None
+        ),
+        "debug_output_dir": (
+            relative_path(debug_output_dir, project_root)
+            if debug_output_dir is not None
             else None
         ),
         "contact_sheet": (
@@ -400,8 +473,10 @@ def main() -> int:
         "",
         f"- Extraction output: `{result['output_jsonl']}`",
         f"- Bubble classifier: `{result['bubble_classifier']}`",
+        f"- Layout detector: `{result['layout_detector']}`",
         f"- Warped output dir: `{result['warped_output_dir']}`",
         f"- Crop output dir: `{result['crop_output_dir']}`",
+        f"- Debug output dir: `{result['debug_output_dir']}`",
         f"- Contact sheet: `{result['contact_sheet']}`",
         f"- Bbox contact sheet: `{result['bbox_contact_sheet']}`",
         "",

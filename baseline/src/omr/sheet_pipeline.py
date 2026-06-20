@@ -5,6 +5,7 @@ from __future__ import annotations
 from collections import defaultdict
 from dataclasses import dataclass
 from datetime import datetime
+import json
 from pathlib import Path
 import re
 from typing import Iterable
@@ -81,38 +82,224 @@ def image_id_from_input(path: Path, project_root: Path) -> str:
     return image_id or "sheet"
 
 
+def _resolve_debug_dir(
+    debug_output_dir: Path | None,
+    image_id: str,
+    project_root: Path,
+) -> Path | None:
+    if debug_output_dir is None:
+        return None
+    base_dir = debug_output_dir if debug_output_dir.is_absolute() else project_root / debug_output_dir
+    debug_dir = base_dir / image_id
+    debug_dir.mkdir(parents=True, exist_ok=True)
+    return debug_dir
+
+
+def _write_debug_json(path: Path, payload: object) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(
+        json.dumps(payload, ensure_ascii=False, indent=2),
+        encoding="utf-8",
+    )
+
+
+def _write_debug_jsonl(path: Path, records: Iterable[dict]) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with path.open("w", encoding="utf-8") as file:
+        for record in records:
+            file.write(json.dumps(record, ensure_ascii=False, sort_keys=True))
+            file.write("\n")
+
+
+def _write_debug_bgr(path: Path, image: np.ndarray) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    cv2.imwrite(str(path), image, [int(cv2.IMWRITE_JPEG_QUALITY), 92])
+
+
+def _draw_debug_title(image: np.ndarray, title: str) -> None:
+    cv2.putText(
+        image,
+        title,
+        (18, 34),
+        cv2.FONT_HERSHEY_SIMPLEX,
+        0.9,
+        (0, 0, 0),
+        4,
+        cv2.LINE_AA,
+    )
+    cv2.putText(
+        image,
+        title,
+        (18, 34),
+        cv2.FONT_HERSHEY_SIMPLEX,
+        0.9,
+        (255, 255, 255),
+        2,
+        cv2.LINE_AA,
+    )
+
+
+def _marker_debug_payload(
+    *,
+    marker_source: str,
+    source_markers: dict[str, tuple[float, float]],
+    layout_info: dict | None,
+) -> dict:
+    return {
+        "marker_source": marker_source,
+        "markers_found": sorted(source_markers),
+        "markers": {
+            key: [round(float(value[0]), 2), round(float(value[1]), 2)]
+            for key, value in sorted(source_markers.items())
+        },
+        "layout": layout_info,
+    }
+
+
+def _save_warp_marker_overlay(
+    image: np.ndarray,
+    source_markers: dict[str, tuple[float, float]],
+    output_path: Path,
+    *,
+    marker_source: str,
+    layout_info: dict | None,
+) -> None:
+    overlay = image.copy()
+    if layout_info is not None:
+        for peak in layout_info.get("marker_peaks", []):
+            center = (int(round(float(peak["x"]))), int(round(float(peak["y"]))))
+            cv2.circle(overlay, center, 5, (255, 112, 67), 1)
+    for name, point in sorted(source_markers.items()):
+        center = (int(round(point[0])), int(round(point[1])))
+        cv2.circle(overlay, center, 14, (34, 197, 94), 3)
+        cv2.putText(
+            overlay,
+            name,
+            (center[0] + 8, center[1] - 8),
+            cv2.FONT_HERSHEY_SIMPLEX,
+            0.65,
+            (16, 120, 55),
+            2,
+            cv2.LINE_AA,
+        )
+    _draw_debug_title(overlay, f"warp markers: {marker_source}")
+    _write_debug_bgr(output_path, overlay)
+
+
+def _save_debug_crops(
+    debug_dir: Path,
+    crop_records: Iterable[dict],
+    crops_by_spec_id: dict[str, Image.Image],
+) -> None:
+    for record in crop_records:
+        crop = crops_by_spec_id.get(str(record["spec_id"]))
+        crop_name = record.get("_crop_name")
+        if crop is None or not crop_name:
+            continue
+        crop_path = (
+            debug_dir
+            / "05_crop_prelabel_crops"
+            / str(record.get("section", "unknown"))
+            / str(record.get("prelabel", "unknown"))
+            / str(crop_name)
+        )
+        crop_path.parent.mkdir(parents=True, exist_ok=True)
+        crop.save(crop_path, quality=92)
+
+
 def warp_sheet_image(
     input_path: Path,
     template: dict,
+    *,
+    layout_detector: object | None = None,
+    debug_dir: Path | None = None,
 ) -> tuple[np.ndarray, dict]:
     image = cv2.imread(str(input_path))
     if image is None:
         raise ValueError(f"cv2.imread returned None for {input_path}")
+    if debug_dir is not None:
+        _write_debug_bgr(debug_dir / "00_raw_scan.jpg", image)
 
     output_size = canonical_size(template)
     target_markers = template["registration_marks"]["centers"]
-    marker_tolerance = float(template["registration_marks"].get("tolerance_px", 18))
-    source_markers = detect_registration_markers(
-        image,
-        target_markers=target_markers,
-        tolerance_px=max(35.0, marker_tolerance * 2.0),
-    )
+    layout_info = None
+    if layout_detector is not None:
+        layout_detection = layout_detector.detect(image, template)
+        source_markers = layout_detection["source_markers"]
+        layout_info = layout_detection["info"]
+        marker_source = "layout_v0"
+        if len(source_markers) < len(target_markers):
+            marker_tolerance = float(template["registration_marks"].get("tolerance_px", 18))
+            fallback_markers = detect_registration_markers(
+                image,
+                target_markers=target_markers,
+                tolerance_px=max(45.0, marker_tolerance * 2.5),
+            )
+            if len(fallback_markers) > len(source_markers):
+                layout_info = {
+                    **layout_info,
+                    "fallback_reason": (
+                        f"layout_matched_{len(source_markers)}_of_{len(target_markers)}_markers"
+                    ),
+                    "fallback_marker_source": "rule_based",
+                    "fallback_markers_found": sorted(fallback_markers),
+                }
+                source_markers = fallback_markers
+                marker_source = "rule_based_fallback_after_layout_v0"
+    else:
+        marker_tolerance = float(template["registration_marks"].get("tolerance_px", 18))
+        source_markers = detect_registration_markers(
+            image,
+            target_markers=target_markers,
+            tolerance_px=max(35.0, marker_tolerance * 2.0),
+        )
+        marker_source = "rule_based"
+    if debug_dir is not None:
+        _save_warp_marker_overlay(
+            image,
+            source_markers,
+            debug_dir / "01_warp_markers.jpg",
+            marker_source=marker_source,
+            layout_info=layout_info,
+        )
+        _write_debug_json(
+            debug_dir / "01_warp_markers.json",
+            _marker_debug_payload(
+                marker_source=marker_source,
+                source_markers=source_markers,
+                layout_info=layout_info,
+            ),
+        )
     global_warped, matrix = warp_from_markers(
         image=image,
         source_markers=source_markers,
         target_markers=target_markers,
         output_size=output_size,
     )
-    warped, local_alignment = align_sheet_blocks_locally(global_warped, template)
+    if debug_dir is not None:
+        _write_debug_bgr(debug_dir / "02_global_warped.jpg", global_warped)
+    warped, local_alignment = align_sheet_blocks_locally(
+        global_warped,
+        template,
+        debug_dir=(debug_dir / "03_local_alignment") if debug_dir is not None else None,
+    )
+    if debug_dir is not None:
+        _write_debug_bgr(debug_dir / "03_local_aligned.jpg", warped)
     return warped, {
         "status": "ok",
-        "method": "global_homography_plus_local_blocks",
+        "method": (
+            "layout_v0_global_homography_plus_local_blocks"
+            if layout_detector is not None
+            else "global_homography_plus_local_blocks"
+        ),
+        "marker_source": marker_source,
         "markers_found": sorted(source_markers),
         "markers": {
             key: [round(value[0], 2), round(value[1], 2)]
             for key, value in sorted(source_markers.items())
         },
         "matrix": np.round(matrix, 6).tolist(),
+        "layout": layout_info,
         "local_alignment": local_alignment,
     }
 
@@ -191,6 +378,7 @@ def crop_specs_from_image(
     bubble_model_settings: BubbleModelSettings | None = None,
     output_dir: Path | None = None,
     project_root: Path | None = None,
+    debug_dir: Path | None = None,
 ) -> list[dict]:
     crop_records: list[dict] = []
     crops_by_spec_id = {}
@@ -231,6 +419,7 @@ def crop_specs_from_image(
                 "ink_ratio_inside": round(crop_result.ink_ratio_inside, 6),
                 "background_noise": round(crop_result.background_noise, 6),
                 "darkness_contrast": round(crop_result.darkness_contrast, 6),
+                "component_score": round(crop_result.connected_component_score, 6),
                 "connected_component_score": round(crop_result.connected_component_score, 6),
                 "prelabel": crop_result.prelabel,
                 "prelabel_source": "adaptive_rule",
@@ -241,6 +430,15 @@ def crop_specs_from_image(
         )
         crops_by_spec_id[spec["spec_id"]] = crop_result.crop
 
+    if debug_dir is not None:
+        save_bbox_overlay(
+            image,
+            crop_records,
+            debug_dir / "05_crop_prelabel_overlay.jpg",
+        )
+        _write_debug_jsonl(debug_dir / "05_crop_prelabel_records.jsonl", crop_records)
+        _save_debug_crops(debug_dir, crop_records, crops_by_spec_id)
+
     if bubble_classifier is not None:
         settings = bubble_model_settings or BubbleModelSettings()
         apply_bubble_classifier(
@@ -249,6 +447,11 @@ def crop_specs_from_image(
             bubble_classifier=bubble_classifier,
             batch_size=settings.batch_size,
         )
+        if debug_dir is not None:
+            _write_debug_jsonl(
+                debug_dir / "05b_bubble_classifier_records.jsonl",
+                crop_records,
+            )
         relabel_groups_by_score(
             crop_records,
             filled_threshold=settings.filled_threshold,
@@ -504,6 +707,8 @@ def extract_sheet(
     crop_output_dir: Path | None = None,
     warped_output_path: Path | None = None,
     bbox_overlay_path: Path | None = None,
+    layout_detector: object | None = None,
+    debug_output_dir: Path | None = None,
 ) -> dict:
     thresholds = thresholds or ExtractionThresholds()
     bubble_model_settings = bubble_model_settings or BubbleModelSettings()
@@ -511,8 +716,14 @@ def extract_sheet(
     input_path = input_path.resolve()
     image_id = image_id_from_input(input_path, project_root)
     source_path = path_for_json(input_path, project_root)
+    image_debug_dir = _resolve_debug_dir(debug_output_dir, image_id, project_root)
 
-    warped, warp_info = warp_sheet_image(input_path, template)
+    warped, warp_info = warp_sheet_image(
+        input_path,
+        template,
+        layout_detector=layout_detector,
+        debug_dir=image_debug_dir,
+    )
     if warped_output_path is not None:
         warped_output_path = (
             warped_output_path
@@ -533,7 +744,12 @@ def extract_sheet(
         crop_output_dir = project_root / crop_output_dir
 
     specs = build_all_specs(template)
-    refined_specs, grid_refinement_info = refine_grid_specs(image, specs, template)
+    refined_specs, grid_refinement_info = refine_grid_specs(
+        image,
+        specs,
+        template,
+        debug_dir=(image_debug_dir / "04_grid_refinement") if image_debug_dir is not None else None,
+    )
     warp_info["grid_refinement"] = grid_refinement_info
     sheet_status = sheet_status_from_warp(warp_info)
 
@@ -548,6 +764,7 @@ def extract_sheet(
         bubble_model_settings=bubble_model_settings,
         output_dir=crop_output_dir,
         project_root=project_root,
+        debug_dir=image_debug_dir,
     )
     if bubble_classifier is None:
         relabel_identity_groups(
@@ -557,6 +774,17 @@ def extract_sheet(
             score_key="fill_score",
             output_dir=crop_output_dir,
             project_root=project_root if crop_output_dir is not None else None,
+        )
+
+    if image_debug_dir is not None:
+        save_bbox_overlay(
+            image,
+            crop_records,
+            image_debug_dir / "06_group_relabel_overlay.jpg",
+        )
+        _write_debug_jsonl(
+            image_debug_dir / "06_group_relabel_records.jsonl",
+            crop_records,
         )
 
     if bbox_overlay_path is not None:
@@ -590,7 +818,7 @@ def extract_sheet(
         part2_section=part2_section,
         part3_section=part3_section,
     )
-    return {
+    result = {
         "generated_at": datetime.now().isoformat(timespec="seconds"),
         "status": sheet_status,
         "template_id": template.get("template_id"),
@@ -630,3 +858,27 @@ def extract_sheet(
         "part2": part2_section,
         "part3": part3_section,
     }
+    if image_debug_dir is not None:
+        result["debug"] = {
+            "dir": path_for_json(image_debug_dir, project_root),
+        }
+        _write_debug_json(
+            image_debug_dir / "07_decode_summary.json",
+            {
+                "status": sheet_status,
+                "summary": result["summary"],
+                "confidence": confidence,
+                "identity": identity_section,
+                "part1_counts": part1_section.get("counts", {}),
+                "part1_review_items": part1_section.get("review_items", []),
+                "part2_counts": part2_section.get("counts", {}),
+                "part3_counts": part3_section.get("counts", {}),
+            },
+        )
+        save_bbox_overlay(
+            image,
+            crop_records,
+            image_debug_dir / "07_decode_final_overlay.jpg",
+        )
+        _write_debug_json(image_debug_dir / "08_output.json", result)
+    return result

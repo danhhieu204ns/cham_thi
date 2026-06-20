@@ -7,6 +7,7 @@ import unittest
 
 import cv2
 import numpy as np
+import torch
 from PIL import Image, ImageDraw
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
@@ -24,6 +25,7 @@ from omr.jsonl_io import (
     write_jsonl_records,
 )
 from omr.local_alignment import estimate_local_transform
+from omr.layout_training import layout_loss
 from omr.markers import detect_registration_markers
 from omr.part2 import decode as decode_part2
 from omr.part3 import compact_value, decode as decode_part3
@@ -74,6 +76,29 @@ class BubbleScoringTests(unittest.TestCase):
         self.assertLess(blank_features["fill_score"], 0.01)
         self.assertGreater(filled_features["fill_score"], blank_features["fill_score"] + 0.1)
         self.assertGreater(filled_features["connected_component_score"], 0.1)
+
+
+class LayoutLossTests(unittest.TestCase):
+    def test_pos_weight_increases_positive_target_loss(self) -> None:
+        logits = torch.zeros((1, 2, 1, 1), dtype=torch.float32)
+        targets = torch.tensor([[[[1.0]], [[0.0]]]], dtype=torch.float32)
+
+        baseline = layout_loss(
+            logits,
+            targets,
+            pos_weights=(1.0, 1.0),
+            dice_weight=0.0,
+            mse_weight=0.0,
+        )
+        weighted = layout_loss(
+            logits,
+            targets,
+            pos_weights=(5.0, 1.0),
+            dice_weight=0.0,
+            mse_weight=0.0,
+        )
+
+        self.assertGreater(float(weighted), float(baseline))
 
 
 class LocalAlignmentTests(unittest.TestCase):

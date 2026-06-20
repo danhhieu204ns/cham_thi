@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Iterable
 
 import cv2
@@ -46,6 +47,108 @@ def _round_pair(value: tuple[float, float] | None) -> list[float] | None:
     if value is None:
         return None
     return [round(float(value[0]), 3), round(float(value[1]), 3)]
+
+
+def _safe_debug_name(value: str) -> str:
+    return "".join(char if char.isalnum() or char in {"-", "_"} else "_" for char in value)
+
+
+def _write_debug_image(path: Path, image: np.ndarray) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    cv2.imwrite(str(path), image, [int(cv2.IMWRITE_JPEG_QUALITY), 92])
+
+
+def _draw_title(image: np.ndarray, title: str) -> None:
+    cv2.putText(
+        image,
+        title,
+        (18, 34),
+        cv2.FONT_HERSHEY_SIMPLEX,
+        0.9,
+        (0, 0, 0),
+        4,
+        cv2.LINE_AA,
+    )
+    cv2.putText(
+        image,
+        title,
+        (18, 34),
+        cv2.FONT_HERSHEY_SIMPLEX,
+        0.9,
+        (255, 255, 255),
+        2,
+        cv2.LINE_AA,
+    )
+
+
+def _draw_grid_block_debug(
+    image_bgr: np.ndarray,
+    *,
+    block_name: str,
+    bbox: tuple[int, int, int, int],
+    circles: list[tuple[float, float, float]],
+    pairs: list[tuple[float, float, float, float]],
+    transform: GridTransform,
+) -> np.ndarray:
+    overlay = image_bgr.copy()
+    x1, y1, x2, y2 = bbox
+    cv2.rectangle(overlay, (x1, y1), (x2, y2), (245, 158, 11), 3)
+    for center_x, center_y, radius in circles:
+        cv2.circle(
+            overlay,
+            (int(round(center_x)), int(round(center_y))),
+            int(round(radius)),
+            (255, 112, 67),
+            1,
+        )
+    for expected_x, expected_y, detected_x, detected_y in pairs:
+        expected = (int(round(expected_x)), int(round(expected_y)))
+        detected = (int(round(detected_x)), int(round(detected_y)))
+        cv2.drawMarker(
+            overlay,
+            expected,
+            (0, 0, 255),
+            markerType=cv2.MARKER_CROSS,
+            markerSize=13,
+            thickness=2,
+        )
+        cv2.circle(overlay, detected, 6, (34, 197, 94), 2)
+        cv2.arrowedLine(overlay, expected, detected, (22, 163, 74), 1, tipLength=0.25)
+    _draw_title(
+        overlay,
+        (
+            f"{block_name}: {transform.status}/{transform.method} "
+            f"circles={len(circles)} matched={transform.matched_count}"
+        ),
+    )
+    return overlay
+
+
+def _draw_refined_specs_debug(
+    image_bgr: np.ndarray,
+    specs: list[dict],
+    block_info: dict[str, dict],
+) -> np.ndarray:
+    overlay = image_bgr.copy()
+    colors = {
+        "ok": (34, 197, 94),
+        "need_review": (245, 158, 11),
+        "fallback_translation": (59, 130, 246),
+        "skipped": (148, 163, 184),
+        "alignment_failed": (239, 68, 68),
+    }
+    for spec in specs:
+        template_bbox = spec.get("template_bbox")
+        if template_bbox:
+            tx1, ty1, tx2, ty2 = (int(value) for value in template_bbox)
+            cv2.rectangle(overlay, (tx1, ty1), (tx2, ty2), (190, 190, 190), 1)
+        x1, y1, x2, y2 = (int(value) for value in spec["bbox"])
+        block_name = grid_block_for_spec(spec)
+        status = str(block_info.get(block_name, {}).get("status", "skipped"))
+        color = colors.get(status, (107, 114, 128))
+        cv2.rectangle(overlay, (x1, y1), (x2, y2), color, 1)
+    _draw_title(overlay, "grid refinement: gray=template color=refined")
+    return overlay
 
 
 def _specs_bbox(
@@ -366,6 +469,7 @@ def refine_grid_specs(
     max_match_distance_px: float | None = None,
     review_residual_threshold_px: float | None = None,
     fail_residual_threshold_px: float | None = None,
+    debug_dir: Path | None = None,
 ) -> tuple[list[dict], dict]:
     specs = [dict(spec) for spec in specs]
     settings = template.get("grid_refinement", {})
@@ -410,6 +514,18 @@ def refine_grid_specs(
         )
         transforms[block_name] = transform
         block_info[block_name] = _transform_info(transform, len(circles))
+        if debug_dir is not None:
+            _write_debug_image(
+                debug_dir / f"01_block_{_safe_debug_name(block_name)}.jpg",
+                _draw_grid_block_debug(
+                    image_bgr,
+                    block_name=block_name,
+                    bbox=bbox,
+                    circles=circles,
+                    pairs=pairs,
+                    transform=transform,
+                ),
+            )
 
     crop_size = tuple(int(value) for value in template["bubble_crop"]["size"])
     refined_specs: list[dict] = []
@@ -425,6 +541,12 @@ def refine_grid_specs(
             refined["center"] = [center_x, center_y]
             refined["bbox"] = list(bubble_bbox(center_x, center_y, crop_size))
         refined_specs.append(refined)
+
+    if debug_dir is not None:
+        _write_debug_image(
+            debug_dir / "02_refined_bboxes.jpg",
+            _draw_refined_specs_debug(image_bgr, refined_specs, block_info),
+        )
 
     status_values = {info["status"] for info in block_info.values()}
     if not status_values:
