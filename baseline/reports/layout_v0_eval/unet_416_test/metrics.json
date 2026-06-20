@@ -1,0 +1,55 @@
+{
+  "checkpoint": "/home/jovyan/cham_thi/baseline/reports/layout_v0_runs/unet_416/best_model.pt",
+  "dataset_dir": "/home/jovyan/cham_thi/data_train/layout_v0",
+  "image_size": [
+    1192,
+    832
+  ],
+  "loss": 0.7466347136280753,
+  "mean_dice": 0.8496153724365845,
+  "peaks": {
+    "bubbles": {
+      "f1": 0.9685550239234451,
+      "fn": 333,
+      "fp": 2953,
+      "match_radius_px": 5.0,
+      "mean_distance_px": 1.0613724481278939,
+      "precision": 0.944865571321882,
+      "recall": 0.9934628975265017,
+      "threshold": 0.25,
+      "tp": 50607
+    },
+    "markers": {
+      "f1": 0.8124076809453472,
+      "fn": 7,
+      "fp": 247,
+      "match_radius_px": 6.0,
+      "mean_distance_px": 1.2395516729354858,
+      "precision": 0.6900878293601004,
+      "recall": 0.9874326750448833,
+      "threshold": 0.35,
+      "tp": 550
+    }
+  },
+  "pixel": {
+    "bubble_heatmap": {
+      "dice": 0.7364851656996511,
+      "mse": 0.007001444125886668
+    },
+    "marker_heatmap": {
+      "dice": 0.833676896242584,
+      "mse": 0.010471615390005436
+    },
+    "page_mask": {
+      "dice": 0.9955277698661682,
+      "mse": 0.01704680420119654
+    },
+    "red_grid_mask": {
+      "dice": 0.8327716579379345,
+      "mse": 0.010169044433330948
+    }
+  },
+  "samples": 88,
+  "split": "test",
+  "visuals_dir": "/home/jovyan/cham_thi/baseline/reports/layout_v0_eval/unet_416_test/visuals"
+}

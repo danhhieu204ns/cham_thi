@@ -1,0 +1,33 @@
+{
+  "base_channels": 32,
+  "batch_size": 8,
+  "dataset_dir": "/home/jovyan/cham_thi/data_train/layout_v0",
+  "device": "cuda",
+  "dice_weight": 1.0,
+  "epochs": 30,
+  "image_height": 832,
+  "image_width": 1192,
+  "limit_train": 0,
+  "limit_val": 0,
+  "lr": 0.0002,
+  "mask_channels": [
+    "page_mask",
+    "marker_heatmap",
+    "bubble_heatmap",
+    "red_grid_mask"
+  ],
+  "mse_weight": 0.25,
+  "output_dir": "/home/jovyan/cham_thi/baseline/reports/layout_v0_runs/unet_416",
+  "overwrite": true,
+  "pos_weights": [
+    3.0,
+    30.0,
+    10.0,
+    6.0
+  ],
+  "progress_every": 20,
+  "train_samples": 480,
+  "val_samples": 100,
+  "weight_decay": 0.0001,
+  "workers": 0
+}
