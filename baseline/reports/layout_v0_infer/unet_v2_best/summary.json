@@ -1,0 +1,23 @@
+{
+  "checkpoint": "/home/jovyan/cham_thi/baseline/reports/layout_v0_runs/unet_v2_full/best_model.pt",
+  "device": "cuda",
+  "generated_at": "2026-06-20T07:38:12",
+  "image_size": [
+    832,
+    1192
+  ],
+  "mean_counts": {
+    "bubbles": 602.1137724550898,
+    "markers": 10.029940119760479
+  },
+  "output_dir": "/home/jovyan/cham_thi/baseline/reports/layout_v0_infer/unet_v2_best",
+  "predictions_path": "/home/jovyan/cham_thi/baseline/reports/layout_v0_infer/unet_v2_best/predictions.jsonl",
+  "samples": 167,
+  "thresholds": {
+    "bubbles": 0.25,
+    "grid": 0.5,
+    "markers": 0.25,
+    "page": 0.5
+  },
+  "visuals_dir": "/home/jovyan/cham_thi/baseline/reports/layout_v0_infer/unet_v2_best/visuals"
+}
